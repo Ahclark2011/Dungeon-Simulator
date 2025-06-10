@@ -74,11 +74,32 @@ class EndlessDungeon {
 }
 
 class Player {
-    constructor(tileSize) {
+    constructor(tileSize, dungeon) {
         this.radius = tileSize / 2 - 2;
-        this.x = 0;
-        this.y = 0;
+        // Find a valid spawn position near (0,0)
+        const [spawnX, spawnY] = this.findValidSpawn(dungeon, tileSize);
+        this.x = spawnX;
+        this.y = spawnY;
         this.speed = 300; // pixels per second
+    }
+
+    findValidSpawn(dungeon, tileSize) {
+        // Search a spiral out from (0,0) for a floor tile
+        const maxRadius = 10;
+        for (let r = 0; r <= maxRadius; r++) {
+            for (let dx = -r; dx <= r; dx++) {
+                for (let dy = -r; dy <= r; dy++) {
+                    if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue; // Only edges
+                    const px = dx * tileSize;
+                    const py = dy * tileSize;
+                    if (!dungeon.isWallAtPixel(px, py, tileSize)) {
+                        return [px, py];
+                    }
+                }
+            }
+        }
+        // Fallback: just use (0,0)
+        return [0, 0];
     }
 
     tryMove(dx, dy, dt, dungeon, tileSize) {
@@ -110,7 +131,7 @@ class Game {
         this.ctx = this.canvas.getContext('2d');
         this.tileSize = 64;
         this.dungeon = new EndlessDungeon(16); // chunk size 16x16
-        this.player = new Player(this.tileSize);
+        this.player = new Player(this.tileSize, this.dungeon);
         this.keys = {};
         this.lastTime = null;
         this.setupEventListeners();
