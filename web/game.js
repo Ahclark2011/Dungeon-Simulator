@@ -69,7 +69,7 @@ class Player {
         this.radius = tileSize / 2 - 2;
         this.x = (startPos[0] + 0.5) * tileSize;
         this.y = (startPos[1] + 0.5) * tileSize;
-        this.speed = 150; // pixels per second
+        this.speed = 300; // pixels per second
     }
 
     tryMove(dx, dy, dt, dungeon, tileSize) {
@@ -102,9 +102,10 @@ class Game {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
-        this.tileSize = 32;
+        this.tileSize = 64; // Larger tile size
         this.dungeon = new DungeonGenerator(25, 25);
         this.player = new Player(this.dungeon.startPos, this.tileSize);
+        this.player.speed = 300; // Faster movement
         this.keys = {};
         this.lastTime = null;
         this.setupEventListeners();
