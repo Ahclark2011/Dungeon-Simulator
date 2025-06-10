@@ -45,8 +45,18 @@ class Enemy {
         let vy = dy * this.speed * dt + repelY * 0.5 * dt;
         // Knockback
         if (this.knockback.t > 0) {
-            vx += this.knockback.x * dt;
-            vy += this.knockback.y * dt;
+            // Clamp knockback direction to not push into player
+            let kx = this.knockback.x, ky = this.knockback.y;
+            const px = player.x - this.x;
+            const py = player.y - this.y;
+            const pdist = Math.sqrt(px*px + py*py);
+            if (pdist < this.radius + player.radius + 2 && pdist > 0) {
+                // Push away from player
+                kx = -px / pdist * Math.abs(this.knockback.x);
+                ky = -py / pdist * Math.abs(this.knockback.y);
+            }
+            vx += kx * dt;
+            vy += ky * dt;
             this.knockback.t -= dt;
         }
         // Try to move, but don't go through walls or out of bounds
@@ -56,8 +66,11 @@ class Enemy {
                 const checkY = ny + Math.sin(angle) * this.radius;
                 if (dungeon.isWallAtPixel(checkX, checkY)) return false;
             }
-            // Prevent out of bounds (arbitrary large bounds)
             if (nx < -10000 || nx > 10000 || ny < -10000 || ny > 10000) return false;
+            // Don't move into player
+            const px = player.x - nx;
+            const py = player.y - ny;
+            if (Math.sqrt(px*px + py*py) < this.radius + player.radius - 2) return false;
             return true;
         };
         if (tryMove(this.x + vx, this.y)) this.x += vx;
@@ -330,15 +343,24 @@ class Player {
     updateSwing(dt) {
         if (this.swinging) {
             this.swingTime += dt;
-            const duration = 0.25;
+            const duration = 0.35;
             if (this.swingTime > duration) {
                 this.swinging = false;
                 this.swingAngle = 0;
             } else {
-                // Smooth swing from start angle
+                // Arc: ease-in-out, overshoot, then return
                 const t = this.swingTime / duration;
-                // Swing from -60° to +60° (or reverse), starting from mouse angle
-                this.swingAngle = this.swingDir * (Math.PI / 3) * (1 - 2 * t);
+                // Ease-in-out (sinusoidal)
+                const ease = 0.5 - 0.5 * Math.cos(Math.PI * t);
+                // Swing from 0 to max, overshoot, then back
+                const maxArc = this.swingDir * (Math.PI / 3 + Math.PI / 12); // 60° + 15° overshoot
+                if (t < 0.5) {
+                    // Go to overshoot
+                    this.swingAngle = maxArc * (ease * 2);
+                } else {
+                    // Return to rest
+                    this.swingAngle = maxArc * (2 - ease * 2);
+                }
                 this.mouseAngle = this.swingStartAngle + this.swingAngle;
             }
         }
