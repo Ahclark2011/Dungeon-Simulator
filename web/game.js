@@ -55,26 +55,46 @@ class DungeonGenerator {
         }
     }
 
-    isWalkable(x, y) {
-        return x >= 0 && x < this.width && y >= 0 && y < this.height && this.grid[y][x] === 0;
+    isWallAtPixel(px, py, tileSize) {
+        const x = Math.floor(px / tileSize);
+        const y = Math.floor(py / tileSize);
+        if (x < 0 || x >= this.width || y < 0 || y >= this.height) return true;
+        return this.grid[y][x] === 1;
     }
 }
 
 class Player {
-    constructor(startPos) {
-        this.x = startPos[0];
-        this.y = startPos[1];
-        this.speed = 1;
+    constructor(startPos, tileSize) {
+        // Start in the center of the starting tile
+        this.radius = tileSize / 2 - 2;
+        this.x = (startPos[0] + 0.5) * tileSize;
+        this.y = (startPos[1] + 0.5) * tileSize;
+        this.speed = 150; // pixels per second
     }
 
-    move(dx, dy, dungeon) {
-        const newX = this.x + dx * this.speed;
-        const newY = this.y + dy * this.speed;
-        
-        if (dungeon.isWalkable(newX, newY)) {
+    tryMove(dx, dy, dt, dungeon, tileSize) {
+        // Calculate new position
+        const newX = this.x + dx * this.speed * dt;
+        const newY = this.y + dy * this.speed * dt;
+        // Check collision with walls (circle vs. grid)
+        if (!this.collidesWithWall(newX, this.y, dungeon, tileSize)) {
             this.x = newX;
+        }
+        if (!this.collidesWithWall(this.x, newY, dungeon, tileSize)) {
             this.y = newY;
         }
+    }
+
+    collidesWithWall(px, py, dungeon, tileSize) {
+        // Check 8 points around the circle
+        for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 4) {
+            const checkX = px + Math.cos(angle) * this.radius;
+            const checkY = py + Math.sin(angle) * this.radius;
+            if (dungeon.isWallAtPixel(checkX, checkY, tileSize)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 
@@ -84,10 +104,11 @@ class Game {
         this.ctx = this.canvas.getContext('2d');
         this.tileSize = 32;
         this.dungeon = new DungeonGenerator(25, 25);
-        this.player = new Player(this.dungeon.startPos);
+        this.player = new Player(this.dungeon.startPos, this.tileSize);
         this.keys = {};
+        this.lastTime = null;
         this.setupEventListeners();
-        this.gameLoop();
+        requestAnimationFrame((ts) => this.gameLoop(ts));
     }
 
     setupEventListeners() {
@@ -103,19 +124,19 @@ class Game {
         });
     }
 
-    handleInput() {
-        if (this.keys['ArrowLeft']) {
-            this.player.move(-1, 0, this.dungeon);
+    handleInput(dt) {
+        let dx = 0, dy = 0;
+        if (this.keys['ArrowLeft'] || this.keys['a']) dx -= 1;
+        if (this.keys['ArrowRight'] || this.keys['d']) dx += 1;
+        if (this.keys['ArrowUp'] || this.keys['w']) dy -= 1;
+        if (this.keys['ArrowDown'] || this.keys['s']) dy += 1;
+        // Normalize diagonal movement
+        if (dx !== 0 && dy !== 0) {
+            const norm = Math.sqrt(2) / 2;
+            dx *= norm;
+            dy *= norm;
         }
-        if (this.keys['ArrowRight']) {
-            this.player.move(1, 0, this.dungeon);
-        }
-        if (this.keys['ArrowUp']) {
-            this.player.move(0, -1, this.dungeon);
-        }
-        if (this.keys['ArrowDown']) {
-            this.player.move(0, 1, this.dungeon);
-        }
+        this.player.tryMove(dx, dy, dt, this.dungeon, this.tileSize);
     }
 
     draw() {
@@ -151,19 +172,22 @@ class Game {
         this.ctx.fillStyle = '#D2B48C';
         this.ctx.beginPath();
         this.ctx.arc(
-            offsetX + (this.player.x * this.tileSize) + (this.tileSize / 2),
-            offsetY + (this.player.y * this.tileSize) + (this.tileSize / 2),
-            this.tileSize / 2 - 2,
+            offsetX + (this.player.x),
+            offsetY + (this.player.y),
+            this.player.radius,
             0,
             Math.PI * 2
         );
         this.ctx.fill();
     }
 
-    gameLoop() {
-        this.handleInput();
+    gameLoop(timestamp) {
+        if (!this.lastTime) this.lastTime = timestamp;
+        const dt = (timestamp - this.lastTime) / 1000; // seconds
+        this.lastTime = timestamp;
+        this.handleInput(dt);
         this.draw();
-        requestAnimationFrame(() => this.gameLoop());
+        requestAnimationFrame((ts) => this.gameLoop(ts));
     }
 }
 
