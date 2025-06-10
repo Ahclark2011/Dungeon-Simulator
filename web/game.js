@@ -11,7 +11,7 @@ class Enemy {
         this.color = '#c0392b'; // red
         this.speed = 120;
         this.reload = 0; // attack cooldown
-        this.hp = 2;
+        this.hp = 5;
         this.dead = false;
         this.knockback = {x: 0, y: 0, t: 0};
     }
