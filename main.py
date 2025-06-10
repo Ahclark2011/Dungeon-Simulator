@@ -62,7 +62,12 @@ class Game:
 
         # Draw player
         player_pos = (self.player.x * TILE_SIZE, self.player.y * TILE_SIZE)
-        pygame.draw.rect(self.screen, (255, 0, 0), (*player_pos, TILE_SIZE, TILE_SIZE))
+        pygame.draw.circle(
+            self.screen,
+            (210, 180, 140),  # Tan color
+            (player_pos[0] + TILE_SIZE // 2, player_pos[1] + TILE_SIZE // 2),
+            TILE_SIZE // 2 - 2  # Slightly smaller than the tile to leave a small gap
+        )
 
         pygame.display.flip()
 
