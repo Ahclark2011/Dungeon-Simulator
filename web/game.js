@@ -49,13 +49,15 @@ class Enemy {
             vy += this.knockback.y * dt;
             this.knockback.t -= dt;
         }
-        // Try to move, but don't go through walls
+        // Try to move, but don't go through walls or out of bounds
         const tryMove = (nx, ny) => {
             for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 4) {
                 const checkX = nx + Math.cos(angle) * this.radius;
                 const checkY = ny + Math.sin(angle) * this.radius;
                 if (dungeon.isWallAtPixel(checkX, checkY)) return false;
             }
+            // Prevent out of bounds (arbitrary large bounds)
+            if (nx < -10000 || nx > 10000 || ny < -10000 || ny > 10000) return false;
             return true;
         };
         if (tryMove(this.x + vx, this.y)) this.x += vx;
@@ -69,6 +71,7 @@ class Enemy {
         return dist < this.radius + player.radius - 2;
     }
     takeDamage(knockX, knockY) {
+        if (this.dead) return;
         this.hp--;
         if (this.hp <= 0) {
             this.dead = true;
@@ -264,6 +267,7 @@ class Player {
         this.swingTime = 0;
         this.mouseAngle = 0;
         this.hands = [0, 0];
+        this.swingStartAngle = 0;
     }
 
     findValidSpawn(dungeon) {
@@ -309,7 +313,6 @@ class Player {
     }
 
     updateMouse(mouseX, mouseY, camX, camY) {
-        // Mouse position relative to player center
         const dx = mouseX - camX;
         const dy = mouseY - camY;
         this.mouseAngle = Math.atan2(dy, dx);
@@ -320,28 +323,32 @@ class Player {
             this.swinging = true;
             this.swingTime = 0;
             this.swingDir = Math.random() < 0.5 ? 1 : -1;
+            this.swingStartAngle = this.mouseAngle;
         }
     }
 
     updateSwing(dt) {
         if (this.swinging) {
             this.swingTime += dt;
-            if (this.swingTime > 0.25) {
+            const duration = 0.25;
+            if (this.swingTime > duration) {
                 this.swinging = false;
                 this.swingAngle = 0;
             } else {
-                // Swing from -75° to +75° (or reverse)
-                this.swingAngle = this.swingDir * (Math.PI * 5/12) * (1 - 2 * this.swingTime / 0.25);
+                // Smooth swing from start angle
+                const t = this.swingTime / duration;
+                // Swing from -60° to +60° (or reverse), starting from mouse angle
+                this.swingAngle = this.swingDir * (Math.PI / 3) * (1 - 2 * t);
+                this.mouseAngle = this.swingStartAngle + this.swingAngle;
             }
         }
     }
 
     getHandPositions() {
-        // Hands are at ±60° from mouse, at player edge
         const base = this.mouseAngle;
         const offset = Math.PI / 3; // 60°
-        let a1 = base + offset + this.swingAngle;
-        let a2 = base - offset + this.swingAngle;
+        let a1 = base + offset;
+        let a2 = base - offset;
         const r = this.radius + 10;
         return [
             [this.x + Math.cos(a1) * r, this.y + Math.sin(a1) * r],
@@ -350,7 +357,6 @@ class Player {
     }
 
     getSwordLine() {
-        // Sword is a line from hand1 to hand2, extended out from hand1
         const [h1, h2] = this.getHandPositions();
         const dx = h2[0] - h1[0];
         const dy = h2[1] - h1[1];
