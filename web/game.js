@@ -1,82 +1,89 @@
-class DungeonGenerator {
-    constructor(width, height) {
-        this.width = width;
-        this.height = height;
-        this.grid = Array(height).fill().map(() => Array(width).fill(1));
-        this.startPos = null;
+// --- Chunk-based endless dungeon ---
+class DungeonChunk {
+    constructor(chunkX, chunkY, chunkSize) {
+        this.chunkX = chunkX;
+        this.chunkY = chunkY;
+        this.chunkSize = chunkSize;
+        this.grid = Array(chunkSize).fill().map(() => Array(chunkSize).fill(1));
         this.generate();
     }
 
     generate() {
-        // Create rooms
-        const numRooms = Math.floor(Math.random() * 6) + 5; // 5-10 rooms
+        // Simple random room/corridor generation for each chunk
+        const numRooms = Math.floor(Math.random() * 4) + 2; // 2-5 rooms per chunk
         for (let i = 0; i < numRooms; i++) {
             const roomWidth = Math.floor(Math.random() * 4) + 3; // 3-6
             const roomHeight = Math.floor(Math.random() * 4) + 3; // 3-6
-            const x = Math.floor(Math.random() * (this.width - roomWidth - 2)) + 1;
-            const y = Math.floor(Math.random() * (this.height - roomHeight - 2)) + 1;
-
-            // Carve out room
+            const x = Math.floor(Math.random() * (this.chunkSize - roomWidth - 2)) + 1;
+            const y = Math.floor(Math.random() * (this.chunkSize - roomHeight - 2)) + 1;
             for (let dy = 0; dy < roomHeight; dy++) {
                 for (let dx = 0; dx < roomWidth; dx++) {
                     this.grid[y + dy][x + dx] = 0;
                 }
             }
-
-            // Connect rooms
-            if (this.startPos === null) {
-                this.startPos = [x + Math.floor(roomWidth/2), y + Math.floor(roomHeight/2)];
-            } else {
-                this.createCorridor(
-                    this.startPos[0], this.startPos[1],
-                    x + Math.floor(roomWidth/2), y + Math.floor(roomHeight/2)
-                );
-            }
         }
     }
 
-    createCorridor(x1, y1, x2, y2) {
-        if (Math.random() < 0.5) {
-            // First horizontal, then vertical
-            for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
-                this.grid[y1][x] = 0;
-            }
-            for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
-                this.grid[y][x2] = 0;
-            }
-        } else {
-            // First vertical, then horizontal
-            for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
-                this.grid[y][x1] = 0;
-            }
-            for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
-                this.grid[y2][x] = 0;
-            }
+    isWall(localX, localY) {
+        if (localX < 0 || localX >= this.chunkSize || localY < 0 || localY >= this.chunkSize) return true;
+        return this.grid[localY][localX] === 1;
+    }
+}
+
+class EndlessDungeon {
+    constructor(chunkSize) {
+        this.chunkSize = chunkSize;
+        this.chunks = new Map(); // key: `${chunkX},${chunkY}`
+    }
+
+    getChunk(chunkX, chunkY) {
+        const key = `${chunkX},${chunkY}`;
+        if (!this.chunks.has(key)) {
+            this.chunks.set(key, new DungeonChunk(chunkX, chunkY, this.chunkSize));
         }
+        return this.chunks.get(key);
     }
 
     isWallAtPixel(px, py, tileSize) {
-        const x = Math.floor(px / tileSize);
-        const y = Math.floor(py / tileSize);
-        if (x < 0 || x >= this.width || y < 0 || y >= this.height) return true;
-        return this.grid[y][x] === 1;
+        const gx = Math.floor(px / tileSize);
+        const gy = Math.floor(py / tileSize);
+        const chunkX = Math.floor(gx / this.chunkSize);
+        const chunkY = Math.floor(gy / this.chunkSize);
+        const localX = ((gx % this.chunkSize) + this.chunkSize) % this.chunkSize;
+        const localY = ((gy % this.chunkSize) + this.chunkSize) % this.chunkSize;
+        return this.getChunk(chunkX, chunkY).isWall(localX, localY);
+    }
+
+    forEachVisibleTile(centerPx, centerPy, tileSize, screenW, screenH, callback) {
+        // Calculate visible grid bounds
+        const halfTilesX = Math.ceil(screenW / (2 * tileSize)) + 2;
+        const halfTilesY = Math.ceil(screenH / (2 * tileSize)) + 2;
+        const centerGx = Math.floor(centerPx / tileSize);
+        const centerGy = Math.floor(centerPy / tileSize);
+        for (let gy = centerGy - halfTilesY; gy <= centerGy + halfTilesY; gy++) {
+            for (let gx = centerGx - halfTilesX; gx <= centerGx + halfTilesX; gx++) {
+                const chunkX = Math.floor(gx / this.chunkSize);
+                const chunkY = Math.floor(gy / this.chunkSize);
+                const localX = ((gx % this.chunkSize) + this.chunkSize) % this.chunkSize;
+                const localY = ((gy % this.chunkSize) + this.chunkSize) % this.chunkSize;
+                const chunk = this.getChunk(chunkX, chunkY);
+                callback(gx, gy, chunk.grid[localY][localX]);
+            }
+        }
     }
 }
 
 class Player {
-    constructor(startPos, tileSize) {
-        // Start in the center of the starting tile
+    constructor(tileSize) {
         this.radius = tileSize / 2 - 2;
-        this.x = (startPos[0] + 0.5) * tileSize;
-        this.y = (startPos[1] + 0.5) * tileSize;
+        this.x = 0;
+        this.y = 0;
         this.speed = 300; // pixels per second
     }
 
     tryMove(dx, dy, dt, dungeon, tileSize) {
-        // Calculate new position
         const newX = this.x + dx * this.speed * dt;
         const newY = this.y + dy * this.speed * dt;
-        // Check collision with walls (circle vs. grid)
         if (!this.collidesWithWall(newX, this.y, dungeon, tileSize)) {
             this.x = newX;
         }
@@ -86,7 +93,6 @@ class Player {
     }
 
     collidesWithWall(px, py, dungeon, tileSize) {
-        // Check 8 points around the circle
         for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 4) {
             const checkX = px + Math.cos(angle) * this.radius;
             const checkY = py + Math.sin(angle) * this.radius;
@@ -102,10 +108,9 @@ class Game {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
-        this.tileSize = 64; // Larger tile size
-        this.dungeon = new DungeonGenerator(25, 25);
-        this.player = new Player(this.dungeon.startPos, this.tileSize);
-        this.player.speed = 300; // Faster movement
+        this.tileSize = 64;
+        this.dungeon = new EndlessDungeon(16); // chunk size 16x16
+        this.player = new Player(this.tileSize);
         this.keys = {};
         this.lastTime = null;
         this.setupEventListeners();
@@ -119,7 +124,6 @@ class Game {
                 window.close();
             }
         });
-
         window.addEventListener('keyup', (e) => {
             this.keys[e.key] = false;
         });
@@ -131,7 +135,6 @@ class Game {
         if (this.keys['ArrowRight'] || this.keys['d']) dx += 1;
         if (this.keys['ArrowUp'] || this.keys['w']) dy -= 1;
         if (this.keys['ArrowDown'] || this.keys['s']) dy += 1;
-        // Normalize diagonal movement
         if (dx !== 0 && dy !== 0) {
             const norm = Math.sqrt(2) / 2;
             dx *= norm;
@@ -141,50 +144,46 @@ class Game {
     }
 
     draw() {
-        // Clear canvas
-        this.ctx.fillStyle = '#808080'; // Gray background
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        // Center camera on player
+        const screenW = this.canvas.width;
+        const screenH = this.canvas.height;
+        const camX = this.player.x;
+        const camY = this.player.y;
+        const offsetX = screenW / 2 - camX;
+        const offsetY = screenH / 2 - camY;
 
-        // Calculate offset to center the dungeon
-        const dungeonPixelWidth = this.dungeon.width * this.tileSize;
-        const dungeonPixelHeight = this.dungeon.height * this.tileSize;
-        const offsetX = (this.canvas.width - dungeonPixelWidth) / 2;
-        const offsetY = (this.canvas.height - dungeonPixelHeight) / 2;
+        // Fill background
+        this.ctx.fillStyle = '#808080'; // Grey background
+        this.ctx.fillRect(0, 0, screenW, screenH);
 
-        // Draw dungeon
-        for (let y = 0; y < this.dungeon.height; y++) {
-            for (let x = 0; x < this.dungeon.width; x++) {
-                const posX = offsetX + x * this.tileSize;
-                const posY = offsetY + y * this.tileSize;
-                
-                if (this.dungeon.grid[y][x] === 1) {
+        // Draw visible dungeon
+        this.dungeon.forEachVisibleTile(
+            this.player.x, this.player.y, this.tileSize, screenW, screenH,
+            (gx, gy, val) => {
+                const px = offsetX + gx * this.tileSize;
+                const py = offsetY + gy * this.tileSize;
+                if (val === 1) {
                     // Wall
-                    this.ctx.fillStyle = '#000000';
-                    this.ctx.fillRect(posX, posY, this.tileSize, this.tileSize);
+                    this.ctx.fillStyle = '#808080';
+                    this.ctx.fillRect(px, py, this.tileSize, this.tileSize);
                 } else {
                     // Floor
-                    this.ctx.strokeStyle = '#FFFFFF';
-                    this.ctx.strokeRect(posX, posY, this.tileSize, this.tileSize);
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillRect(px, py, this.tileSize, this.tileSize);
                 }
             }
-        }
+        );
 
         // Draw player as a tan circle
         this.ctx.fillStyle = '#D2B48C';
         this.ctx.beginPath();
-        this.ctx.arc(
-            offsetX + (this.player.x),
-            offsetY + (this.player.y),
-            this.player.radius,
-            0,
-            Math.PI * 2
-        );
+        this.ctx.arc(screenW / 2, screenH / 2, this.player.radius, 0, Math.PI * 2);
         this.ctx.fill();
     }
 
     gameLoop(timestamp) {
         if (!this.lastTime) this.lastTime = timestamp;
-        const dt = (timestamp - this.lastTime) / 1000; // seconds
+        const dt = (timestamp - this.lastTime) / 1000;
         this.lastTime = timestamp;
         this.handleInput(dt);
         this.draw();
@@ -192,7 +191,6 @@ class Game {
     }
 }
 
-// Start the game when the page loads
 window.onload = () => {
     new Game();
 }; 
