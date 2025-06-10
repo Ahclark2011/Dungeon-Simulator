@@ -14,36 +14,45 @@ class Room {
 
     generateDoors(neighbors) {
         // neighbors: {N: Room|null, S: Room|null, E: Room|null, W: Room|null}
-        // Place at least 3 doors on different walls, random positions (not corners)
         const walls = ['N', 'S', 'E', 'W'];
-        // Always add doors to connect to existing neighbors
         let doors = [];
-        for (const dir of walls) {
-            if (neighbors[dir]) doors.push(dir);
-        }
-        // Add random doors until we have at least 3
-        while (doors.length < 3) {
-            const dir = walls[Math.floor(Math.random() * 4)];
-            if (!doors.includes(dir)) doors.push(dir);
-        }
-        // Assign random positions for each door (not at corners)
         let doorPositions = {};
-        for (const dir of doors) {
-            if (dir === 'N' || dir === 'S') {
-                // Top or bottom wall
-                let x = Math.floor(Math.random() * (ROOM_SIZE - 2 - DOOR_WIDTH + 1)) + 1;
-                doorPositions[dir] = x;
-            } else {
-                // Left or right wall
-                let y = Math.floor(Math.random() * (ROOM_SIZE - 2 - DOOR_WIDTH + 1)) + 1;
-                doorPositions[dir] = y;
+        // 1. Always add doors to connect to existing neighbors, aligned with their doors
+        for (const dir of walls) {
+            if (neighbors[dir] && neighbors[dir].doors) {
+                // Align with neighbor's door
+                if (dir === 'N' && neighbors[dir].doors['S'] !== undefined) {
+                    doors.push('N');
+                    doorPositions['N'] = neighbors[dir].doors['S'];
+                }
+                if (dir === 'S' && neighbors[dir].doors['N'] !== undefined) {
+                    doors.push('S');
+                    doorPositions['S'] = neighbors[dir].doors['N'];
+                }
+                if (dir === 'E' && neighbors[dir].doors['W'] !== undefined) {
+                    doors.push('E');
+                    doorPositions['E'] = neighbors[dir].doors['W'];
+                }
+                if (dir === 'W' && neighbors[dir].doors['E'] !== undefined) {
+                    doors.push('W');
+                    doorPositions['W'] = neighbors[dir].doors['E'];
+                }
             }
         }
-        // If neighbor exists, align door with neighbor's door
-        if (neighbors['N'] && neighbors['N'].doors['S'] !== undefined) doorPositions['N'] = neighbors['N'].doors['S'];
-        if (neighbors['S'] && neighbors['S'].doors['N'] !== undefined) doorPositions['S'] = neighbors['S'].doors['N'];
-        if (neighbors['E'] && neighbors['E'].doors['W'] !== undefined) doorPositions['E'] = neighbors['E'].doors['W'];
-        if (neighbors['W'] && neighbors['W'].doors['E'] !== undefined) doorPositions['W'] = neighbors['W'].doors['E'];
+        // 2. Add random doors until we have at least 3, but only if no neighbor exists in that direction
+        while (doors.length < 3) {
+            const dir = walls[Math.floor(Math.random() * 4)];
+            if (!doors.includes(dir) && !neighbors[dir]) {
+                if (dir === 'N' || dir === 'S') {
+                    let x = Math.floor(Math.random() * (ROOM_SIZE - 2 - DOOR_WIDTH + 1)) + 1;
+                    doorPositions[dir] = x;
+                } else {
+                    let y = Math.floor(Math.random() * (ROOM_SIZE - 2 - DOOR_WIDTH + 1)) + 1;
+                    doorPositions[dir] = y;
+                }
+                doors.push(dir);
+            }
+        }
         return doorPositions;
     }
 
