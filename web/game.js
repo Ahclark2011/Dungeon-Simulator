@@ -14,6 +14,7 @@ class Enemy {
         this.hp = 5;
         this.dead = false;
         this.knockback = {x: 0, y: 0, t: 0};
+        this.deathTimer = 0; // for visual indicator
     }
     moveToward(player, dt, others, dungeon) {
         if (this.dead) return;
@@ -88,6 +89,7 @@ class Enemy {
         this.hp--;
         if (this.hp <= 0) {
             this.dead = true;
+            this.deathTimer = 1.0; // show indicator for 1 second
         } else {
             // Apply knockback
             this.knockback.x = knockX * 600;
@@ -419,6 +421,8 @@ class Game {
         });
         this.canvas.addEventListener('mousedown', (e) => {
             if (e.button === 0) {
+                // Set swing direction toward mouse
+                this.player.swingDir = this.handleSwingDirection(this.mouseX, this.mouseY);
                 this.player.startSwing();
             }
         });
@@ -448,7 +452,15 @@ class Game {
         const playerSpawn = isStartRoom ? this.player.spawnTile : null;
         this.dungeon.getRoom(roomX, roomY, playerSpawn, isStartRoom);
         const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
-        for (const enemy of enemies) {
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            const enemy = enemies[i];
+            if (enemy.dead) {
+                enemy.deathTimer -= dt;
+                if (enemy.deathTimer <= 0) {
+                    enemies.splice(i, 1); // remove after indicator
+                }
+                continue;
+            }
             enemy.moveToward(this.player, dt, enemies, this.dungeon);
             if (enemy.reload > 0) enemy.reload -= dt;
             if (enemy.canAttack(this.player) && enemy.reload <= 0 && this.player.invuln <= 0) {
@@ -523,7 +535,21 @@ class Game {
         // Draw enemies in current room
         const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
         for (const enemy of enemies) {
-            if (enemy.dead) continue;
+            if (enemy.dead) {
+                // Draw a red X for dead enemies
+                this.ctx.save();
+                this.ctx.globalAlpha = Math.max(0, enemy.deathTimer);
+                this.ctx.strokeStyle = '#ff2222';
+                this.ctx.lineWidth = 8;
+                this.ctx.beginPath();
+                this.ctx.moveTo(offsetX + enemy.x - enemy.radius, offsetY + enemy.y - enemy.radius);
+                this.ctx.lineTo(offsetX + enemy.x + enemy.radius, offsetY + enemy.y + enemy.radius);
+                this.ctx.moveTo(offsetX + enemy.x + enemy.radius, offsetY + enemy.y - enemy.radius);
+                this.ctx.lineTo(offsetX + enemy.x - enemy.radius, offsetY + enemy.y + enemy.radius);
+                this.ctx.stroke();
+                this.ctx.restore();
+                continue;
+            }
             this.ctx.fillStyle = enemy.color;
             this.ctx.beginPath();
             this.ctx.arc(offsetX + enemy.x, offsetY + enemy.y, enemy.radius, 0, Math.PI * 2);
@@ -577,6 +603,21 @@ class Game {
         }
         this.draw();
         requestAnimationFrame((ts) => this.gameLoop(ts));
+    }
+
+    handleSwingDirection(mouseX, mouseY) {
+        const screenW = this.canvas.width;
+        const screenH = this.canvas.height;
+        const camX = screenW / 2;
+        const camY = screenH / 2;
+        const dx = mouseX - camX;
+        const dy = mouseY - camY;
+        const mouseAngle = Math.atan2(dy, dx);
+        // Find the shortest direction to swing from current angle to mouseAngle
+        let diff = mouseAngle - this.player.mouseAngle;
+        while (diff > Math.PI) diff -= 2 * Math.PI;
+        while (diff < -Math.PI) diff += 2 * Math.PI;
+        return diff >= 0 ? 1 : -1;
     }
 }
 
