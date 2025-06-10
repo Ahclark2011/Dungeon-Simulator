@@ -11,12 +11,16 @@ class Enemy {
         this.color = '#c0392b'; // red
         this.speed = 120;
         this.reload = 0; // attack cooldown
+        this.hp = 2;
+        this.dead = false;
+        this.knockback = {x: 0, y: 0, t: 0};
     }
     moveToward(player, dt, others, dungeon) {
+        if (this.dead) return;
         // Repel from other enemies
         let repelX = 0, repelY = 0;
         for (const other of others) {
-            if (other === this) continue;
+            if (other === this || other.dead) continue;
             const dx = this.x - other.x;
             const dy = this.y - other.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
@@ -25,17 +29,26 @@ class Enemy {
                 repelY += dy / dist * (this.radius * 2 - dist);
             }
         }
-        // Move toward player
+        // Move toward player, but stop at edge
         let dx = player.x - this.x;
         let dy = player.y - this.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist > 0) {
+        let dist = Math.sqrt(dx*dx + dy*dy);
+        let stopDist = this.radius + player.radius - 6; // allow a little overlap
+        if (dist > 0 && dist > stopDist) {
             dx /= dist;
             dy /= dist;
+        } else {
+            dx = 0; dy = 0;
         }
         // Combine movement
         let vx = dx * this.speed * dt + repelX * 0.5 * dt;
         let vy = dy * this.speed * dt + repelY * 0.5 * dt;
+        // Knockback
+        if (this.knockback.t > 0) {
+            vx += this.knockback.x * dt;
+            vy += this.knockback.y * dt;
+            this.knockback.t -= dt;
+        }
         // Try to move, but don't go through walls
         const tryMove = (nx, ny) => {
             for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 4) {
@@ -49,10 +62,22 @@ class Enemy {
         if (tryMove(this.x, this.y + vy)) this.y += vy;
     }
     canAttack(player) {
+        if (this.dead) return false;
         const dx = player.x - this.x;
         const dy = player.y - this.y;
         const dist = Math.sqrt(dx*dx + dy*dy);
-        return dist < this.radius + player.radius;
+        return dist < this.radius + player.radius - 2;
+    }
+    takeDamage(knockX, knockY) {
+        this.hp--;
+        if (this.hp <= 0) {
+            this.dead = true;
+        } else {
+            // Apply knockback
+            this.knockback.x = knockX * 600;
+            this.knockback.y = knockY * 600;
+            this.knockback.t = 0.2;
+        }
     }
 }
 
@@ -226,14 +251,19 @@ class RoomDungeon {
 class Player {
     constructor(dungeon) {
         this.radius = TILE_SIZE / 2 - 2;
-        // Find a valid spawn position in the center of the starting room
         const [spawnX, spawnY, spawnTile] = this.findValidSpawn(dungeon);
         this.x = spawnX;
         this.y = spawnY;
         this.speed = 300;
         this.spawnTile = spawnTile;
         this.hp = 5;
-        this.invuln = 0; // brief invulnerability after hit
+        this.invuln = 0;
+        this.swinging = false;
+        this.swingAngle = 0;
+        this.swingDir = 1;
+        this.swingTime = 0;
+        this.mouseAngle = 0;
+        this.hands = [0, 0];
     }
 
     findValidSpawn(dungeon) {
@@ -277,6 +307,57 @@ class Player {
         }
         return false;
     }
+
+    updateMouse(mouseX, mouseY, camX, camY) {
+        // Mouse position relative to player center
+        const dx = mouseX - camX;
+        const dy = mouseY - camY;
+        this.mouseAngle = Math.atan2(dy, dx);
+    }
+
+    startSwing() {
+        if (!this.swinging) {
+            this.swinging = true;
+            this.swingTime = 0;
+            this.swingDir = Math.random() < 0.5 ? 1 : -1;
+        }
+    }
+
+    updateSwing(dt) {
+        if (this.swinging) {
+            this.swingTime += dt;
+            if (this.swingTime > 0.25) {
+                this.swinging = false;
+                this.swingAngle = 0;
+            } else {
+                // Swing from -75° to +75° (or reverse)
+                this.swingAngle = this.swingDir * (Math.PI * 5/12) * (1 - 2 * this.swingTime / 0.25);
+            }
+        }
+    }
+
+    getHandPositions() {
+        // Hands are at ±75° from mouse, at player edge
+        const base = this.mouseAngle;
+        const offset = Math.PI * 5/12; // 75°
+        let a1 = base + offset + this.swingAngle;
+        let a2 = base - offset + this.swingAngle;
+        const r = this.radius + 10;
+        return [
+            [this.x + Math.cos(a1) * r, this.y + Math.sin(a1) * r],
+            [this.x + Math.cos(a2) * r, this.y + Math.sin(a2) * r]
+        ];
+    }
+
+    getSwordLine() {
+        // Sword is a line from hand1 to hand2, extended out from hand1
+        const [h1, h2] = this.getHandPositions();
+        const dx = h2[0] - h1[0];
+        const dy = h2[1] - h1[1];
+        const len = Math.sqrt(dx*dx + dy*dy);
+        const ext = 40;
+        return [h1, [h2[0] + dx/len*ext, h2[1] + dy/len*ext]];
+    }
 }
 
 class Game {
@@ -287,6 +368,8 @@ class Game {
         this.player = new Player(this.dungeon);
         this.keys = {};
         this.lastTime = null;
+        this.mouseX = 0;
+        this.mouseY = 0;
         this.setupEventListeners();
         requestAnimationFrame((ts) => this.gameLoop(ts));
     }
@@ -300,6 +383,16 @@ class Game {
         });
         window.addEventListener('keyup', (e) => {
             this.keys[e.key] = false;
+        });
+        this.canvas.addEventListener('mousemove', (e) => {
+            const rect = this.canvas.getBoundingClientRect();
+            this.mouseX = e.clientX - rect.left;
+            this.mouseY = e.clientY - rect.top;
+        });
+        this.canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) {
+                this.player.startSwing();
+            }
         });
     }
 
@@ -324,11 +417,45 @@ class Game {
             if (enemy.reload > 0) enemy.reload -= dt;
             if (enemy.canAttack(this.player) && enemy.reload <= 0 && this.player.invuln <= 0) {
                 this.player.hp--;
-                this.player.invuln = 1.0; // 1 second invulnerability
-                enemy.reload = 1.0; // 1 second between attacks
+                this.player.invuln = 1.0;
+                enemy.reload = 1.0;
             }
         }
         if (this.player.invuln > 0) this.player.invuln -= dt;
+    }
+
+    updatePlayer(dt) {
+        // Update mouse angle for hands
+        const screenW = this.canvas.width;
+        const screenH = this.canvas.height;
+        const camX = screenW / 2;
+        const camY = screenH / 2;
+        this.player.updateMouse(this.mouseX, this.mouseY, camX, camY);
+        this.player.updateSwing(dt);
+    }
+
+    checkSwordHits() {
+        if (!this.player.swinging) return;
+        const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
+        const [p1, p2] = this.player.getSwordLine();
+        for (const enemy of enemies) {
+            if (enemy.dead) continue;
+            // Closest point on sword line to enemy center
+            const ex = enemy.x, ey = enemy.y;
+            const x1 = p1[0], y1 = p1[1], x2 = p2[0], y2 = p2[1];
+            const l2 = (x2-x1)*(x2-x1)+(y2-y1)*(y2-y1);
+            let t = ((ex-x1)*(x2-x1)+(ey-y1)*(y2-y1))/l2;
+            t = Math.max(0, Math.min(1, t));
+            const cx = x1 + t*(x2-x1);
+            const cy = y1 + t*(y2-y1);
+            const dist = Math.sqrt((ex-cx)*(ex-cx)+(ey-cy)*(ey-cy));
+            if (dist < enemy.radius + 8) {
+                // Knockback direction
+                const kx = (enemy.x - this.player.x) / Math.max(1, Math.sqrt((enemy.x - this.player.x)**2 + (enemy.y - this.player.y)**2));
+                const ky = (enemy.y - this.player.y) / Math.max(1, Math.sqrt((enemy.x - this.player.x)**2 + (enemy.y - this.player.y)**2));
+                enemy.takeDamage(kx, ky);
+            }
+        }
     }
 
     draw() {
@@ -340,7 +467,6 @@ class Game {
         const offsetY = screenH / 2 - camY;
         this.ctx.fillStyle = '#808080';
         this.ctx.fillRect(0, 0, screenW, screenH);
-        // Draw tiles and grid lines
         this.dungeon.forEachVisibleTile(
             this.player.x, this.player.y, screenW, screenH,
             (gx, gy, val) => {
@@ -353,7 +479,6 @@ class Game {
                     this.ctx.fillStyle = '#FFFFFF';
                     this.ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
                 }
-                // Draw grid lines
                 this.ctx.strokeStyle = '#e0e0e0';
                 this.ctx.lineWidth = 1;
                 this.ctx.strokeRect(px, py, TILE_SIZE, TILE_SIZE);
@@ -362,11 +487,29 @@ class Game {
         // Draw enemies in current room
         const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
         for (const enemy of enemies) {
+            if (enemy.dead) continue;
             this.ctx.fillStyle = enemy.color;
             this.ctx.beginPath();
             this.ctx.arc(offsetX + enemy.x, offsetY + enemy.y, enemy.radius, 0, Math.PI * 2);
             this.ctx.fill();
         }
+        // Draw player hands
+        const [h1, h2] = this.player.getHandPositions();
+        this.ctx.fillStyle = '#D2B48C';
+        this.ctx.beginPath();
+        this.ctx.arc(offsetX + h1[0], offsetY + h1[1], 14, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.beginPath();
+        this.ctx.arc(offsetX + h2[0], offsetY + h2[1], 14, 0, Math.PI * 2);
+        this.ctx.fill();
+        // Draw sword
+        const [s1, s2] = this.player.getSwordLine();
+        this.ctx.strokeStyle = '#888';
+        this.ctx.lineWidth = 8;
+        this.ctx.beginPath();
+        this.ctx.moveTo(offsetX + s1[0], offsetY + s1[1]);
+        this.ctx.lineTo(offsetX + s2[0], offsetY + s2[1]);
+        this.ctx.stroke();
         // Draw player
         this.ctx.fillStyle = this.player.invuln > 0 ? '#ffe4b5' : '#D2B48C';
         this.ctx.beginPath();
@@ -376,14 +519,26 @@ class Game {
         this.ctx.fillStyle = '#c0392b';
         this.ctx.font = '32px Arial';
         this.ctx.fillText('HP: ' + this.player.hp, 20, 40);
+        // Game over
+        if (this.player.hp <= 0) {
+            this.ctx.fillStyle = '#c0392b';
+            this.ctx.font = 'bold 80px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('GAME OVER', screenW/2, screenH/2);
+            this.ctx.textAlign = 'left';
+        }
     }
 
     gameLoop(timestamp) {
         if (!this.lastTime) this.lastTime = timestamp;
         const dt = (timestamp - this.lastTime) / 1000;
         this.lastTime = timestamp;
-        this.handleInput(dt);
-        this.updateEnemies(dt);
+        if (this.player.hp > 0) {
+            this.handleInput(dt);
+            this.updateEnemies(dt);
+            this.updatePlayer(dt);
+            this.checkSwordHits();
+        }
         this.draw();
         requestAnimationFrame((ts) => this.gameLoop(ts));
     }
