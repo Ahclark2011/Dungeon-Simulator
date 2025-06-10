@@ -2,28 +2,17 @@
 
 A single-player dungeon crawler game where players explore randomly generated dungeons. Navigate through rooms, avoid traps, and find treasures!
 
+## Play the Game
+
+Simply visit: https://ahclark2011.github.io/Dungeon-Simulator/web/
+
+No installation required! The game runs directly in your web browser.
+
 ## Features
 - Randomly generated dungeons
 - Player movement with arrow keys
 - Simple and intuitive controls
 - Endless exploration possibilities
-
-## Setup Instructions
-
-1. Make sure you have Python 3.8+ installed on your system
-2. Clone this repository:
-   ```bash
-   git clone https://github.com/yourusername/dungeon-crawler.git
-   cd dungeon-crawler
-   ```
-3. Install the required dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Run the game:
-   ```bash
-   python main.py
-   ```
 
 ## Controls
 - Arrow keys: Move the player
