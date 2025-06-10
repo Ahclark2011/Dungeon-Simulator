@@ -120,18 +120,24 @@ class Game {
 
     draw() {
         // Clear canvas
-        this.ctx.fillStyle = '#000000';
+        this.ctx.fillStyle = '#808080'; // Gray background
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // Calculate offset to center the dungeon
+        const dungeonPixelWidth = this.dungeon.width * this.tileSize;
+        const dungeonPixelHeight = this.dungeon.height * this.tileSize;
+        const offsetX = (this.canvas.width - dungeonPixelWidth) / 2;
+        const offsetY = (this.canvas.height - dungeonPixelHeight) / 2;
 
         // Draw dungeon
         for (let y = 0; y < this.dungeon.height; y++) {
             for (let x = 0; x < this.dungeon.width; x++) {
-                const posX = x * this.tileSize;
-                const posY = y * this.tileSize;
+                const posX = offsetX + x * this.tileSize;
+                const posY = offsetY + y * this.tileSize;
                 
                 if (this.dungeon.grid[y][x] === 1) {
                     // Wall
-                    this.ctx.fillStyle = '#808080';
+                    this.ctx.fillStyle = '#000000';
                     this.ctx.fillRect(posX, posY, this.tileSize, this.tileSize);
                 } else {
                     // Floor
@@ -141,13 +147,13 @@ class Game {
             }
         }
 
-        // Draw player
-        this.ctx.fillStyle = '#D2B48C';  // Tan color
+        // Draw player as a tan circle
+        this.ctx.fillStyle = '#D2B48C';
         this.ctx.beginPath();
         this.ctx.arc(
-            (this.player.x * this.tileSize) + (this.tileSize / 2),
-            (this.player.y * this.tileSize) + (this.tileSize / 2),
-            this.tileSize / 2 - 2,  // Slightly smaller than the tile to leave a small gap
+            offsetX + (this.player.x * this.tileSize) + (this.tileSize / 2),
+            offsetY + (this.player.y * this.tileSize) + (this.tileSize / 2),
+            this.tileSize / 2 - 2,
             0,
             Math.PI * 2
         );
