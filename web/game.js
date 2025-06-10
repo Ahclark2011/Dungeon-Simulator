@@ -82,14 +82,15 @@ class Enemy {
 }
 
 class Room {
-    constructor(roomX, roomY, neighbors, playerSpawn) {
+    constructor(roomX, roomY, neighbors, playerSpawn, isStartRoom = false) {
         this.roomX = roomX;
         this.roomY = roomY;
         this.grid = Array(ROOM_SIZE).fill().map(() => Array(ROOM_SIZE).fill(1));
         this.doors = this.generateDoors(neighbors);
         this.carveRoom();
         this.enemies = [];
-        this.spawnEnemies(playerSpawn);
+        this.spawned = false;
+        this.spawnEnemies(isStartRoom ? playerSpawn : null);
     }
 
     generateDoors(neighbors) {
@@ -159,7 +160,8 @@ class Room {
     }
 
     spawnEnemies(playerSpawn) {
-        // 2-5 enemies per room
+        if (this.spawned) return;
+        this.spawned = true;
         const numEnemies = Math.floor(Math.random() * 4) + 2;
         let attempts = 0;
         while (this.enemies.length < numEnemies && attempts < 100) {
@@ -167,13 +169,12 @@ class Room {
             const x = Math.floor(Math.random() * (ROOM_SIZE - 2)) + 1;
             const y = Math.floor(Math.random() * (ROOM_SIZE - 2)) + 1;
             if (this.grid[y][x] !== 0) continue;
-            // Don't spawn on player
+            // Only avoid player spawn for starting room
             if (playerSpawn) {
                 const px = playerSpawn[0];
                 const py = playerSpawn[1];
                 if (Math.abs(x - px) < 2 && Math.abs(y - py) < 2) continue;
             }
-            // Don't overlap other enemies
             let overlap = false;
             for (const e of this.enemies) {
                 if (Math.abs(e.x - x) < 2 && Math.abs(e.y - y) < 2) {
@@ -194,20 +195,19 @@ class Room {
 
 class RoomDungeon {
     constructor() {
-        this.rooms = new Map(); // key: `${roomX},${roomY}`
+        this.rooms = new Map();
     }
 
-    getRoom(roomX, roomY, playerSpawn) {
+    getRoom(roomX, roomY, playerSpawn, isStartRoom = false) {
         const key = `${roomX},${roomY}`;
         if (!this.rooms.has(key)) {
-            // Find neighbors
             const neighbors = {
                 N: this.rooms.get(`${roomX},${roomY-1}`) || null,
                 S: this.rooms.get(`${roomX},${roomY+1}`) || null,
                 E: this.rooms.get(`${roomX+1},${roomY}`) || null,
                 W: this.rooms.get(`${roomX-1},${roomY}`) || null,
             };
-            this.rooms.set(key, new Room(roomX, roomY, neighbors, playerSpawn));
+            this.rooms.set(key, new Room(roomX, roomY, neighbors, playerSpawn, isStartRoom));
         }
         return this.rooms.get(key);
     }
@@ -337,9 +337,9 @@ class Player {
     }
 
     getHandPositions() {
-        // Hands are at ±75° from mouse, at player edge
+        // Hands are at ±60° from mouse, at player edge
         const base = this.mouseAngle;
-        const offset = Math.PI * 5/12; // 75°
+        const offset = Math.PI / 3; // 60°
         let a1 = base + offset + this.swingAngle;
         let a2 = base - offset + this.swingAngle;
         const r = this.radius + 10;
@@ -411,6 +411,14 @@ class Game {
     }
 
     updateEnemies(dt) {
+        // Ensure enemies are spawned for current room
+        const gx = Math.floor(this.player.x / TILE_SIZE);
+        const gy = Math.floor(this.player.y / TILE_SIZE);
+        const roomX = Math.floor(gx / ROOM_SIZE);
+        const roomY = Math.floor(gy / ROOM_SIZE);
+        const isStartRoom = (roomX === 0 && roomY === 0);
+        const playerSpawn = isStartRoom ? this.player.spawnTile : null;
+        this.dungeon.getRoom(roomX, roomY, playerSpawn, isStartRoom);
         const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
         for (const enemy of enemies) {
             enemy.moveToward(this.player, dt, enemies, this.dungeon);
