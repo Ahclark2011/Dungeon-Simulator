@@ -9,6 +9,50 @@ class Enemy {
         this.y = y;
         this.radius = radius;
         this.color = '#c0392b'; // red
+        this.speed = 120;
+        this.reload = 0; // attack cooldown
+    }
+    moveToward(player, dt, others, dungeon) {
+        // Repel from other enemies
+        let repelX = 0, repelY = 0;
+        for (const other of others) {
+            if (other === this) continue;
+            const dx = this.x - other.x;
+            const dy = this.y - other.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < this.radius * 2 && dist > 0) {
+                repelX += dx / dist * (this.radius * 2 - dist);
+                repelY += dy / dist * (this.radius * 2 - dist);
+            }
+        }
+        // Move toward player
+        let dx = player.x - this.x;
+        let dy = player.y - this.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist > 0) {
+            dx /= dist;
+            dy /= dist;
+        }
+        // Combine movement
+        let vx = dx * this.speed * dt + repelX * 0.5 * dt;
+        let vy = dy * this.speed * dt + repelY * 0.5 * dt;
+        // Try to move, but don't go through walls
+        const tryMove = (nx, ny) => {
+            for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 4) {
+                const checkX = nx + Math.cos(angle) * this.radius;
+                const checkY = ny + Math.sin(angle) * this.radius;
+                if (dungeon.isWallAtPixel(checkX, checkY)) return false;
+            }
+            return true;
+        };
+        if (tryMove(this.x + vx, this.y)) this.x += vx;
+        if (tryMove(this.x, this.y + vy)) this.y += vy;
+    }
+    canAttack(player) {
+        const dx = player.x - this.x;
+        const dy = player.y - this.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        return dist < this.radius + player.radius;
     }
 }
 
@@ -188,6 +232,8 @@ class Player {
         this.y = spawnY;
         this.speed = 300;
         this.spawnTile = spawnTile;
+        this.hp = 5;
+        this.invuln = 0; // brief invulnerability after hit
     }
 
     findValidSpawn(dungeon) {
@@ -271,6 +317,20 @@ class Game {
         this.player.tryMove(dx, dy, dt, this.dungeon);
     }
 
+    updateEnemies(dt) {
+        const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
+        for (const enemy of enemies) {
+            enemy.moveToward(this.player, dt, enemies, this.dungeon);
+            if (enemy.reload > 0) enemy.reload -= dt;
+            if (enemy.canAttack(this.player) && enemy.reload <= 0 && this.player.invuln <= 0) {
+                this.player.hp--;
+                this.player.invuln = 1.0; // 1 second invulnerability
+                enemy.reload = 1.0; // 1 second between attacks
+            }
+        }
+        if (this.player.invuln > 0) this.player.invuln -= dt;
+    }
+
     draw() {
         const screenW = this.canvas.width;
         const screenH = this.canvas.height;
@@ -280,6 +340,7 @@ class Game {
         const offsetY = screenH / 2 - camY;
         this.ctx.fillStyle = '#808080';
         this.ctx.fillRect(0, 0, screenW, screenH);
+        // Draw tiles and grid lines
         this.dungeon.forEachVisibleTile(
             this.player.x, this.player.y, screenW, screenH,
             (gx, gy, val) => {
@@ -292,6 +353,10 @@ class Game {
                     this.ctx.fillStyle = '#FFFFFF';
                     this.ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
                 }
+                // Draw grid lines
+                this.ctx.strokeStyle = '#e0e0e0';
+                this.ctx.lineWidth = 1;
+                this.ctx.strokeRect(px, py, TILE_SIZE, TILE_SIZE);
             }
         );
         // Draw enemies in current room
@@ -302,10 +367,15 @@ class Game {
             this.ctx.arc(offsetX + enemy.x, offsetY + enemy.y, enemy.radius, 0, Math.PI * 2);
             this.ctx.fill();
         }
-        this.ctx.fillStyle = '#D2B48C';
+        // Draw player
+        this.ctx.fillStyle = this.player.invuln > 0 ? '#ffe4b5' : '#D2B48C';
         this.ctx.beginPath();
         this.ctx.arc(screenW / 2, screenH / 2, this.player.radius, 0, Math.PI * 2);
         this.ctx.fill();
+        // Draw HP
+        this.ctx.fillStyle = '#c0392b';
+        this.ctx.font = '32px Arial';
+        this.ctx.fillText('HP: ' + this.player.hp, 20, 40);
     }
 
     gameLoop(timestamp) {
@@ -313,6 +383,7 @@ class Game {
         const dt = (timestamp - this.lastTime) / 1000;
         this.lastTime = timestamp;
         this.handleInput(dt);
+        this.updateEnemies(dt);
         this.draw();
         requestAnimationFrame((ts) => this.gameLoop(ts));
     }
