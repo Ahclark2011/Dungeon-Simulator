@@ -142,13 +142,16 @@ class Game {
         }
 
         // Draw player
-        this.ctx.fillStyle = '#FF0000';
-        this.ctx.fillRect(
-            this.player.x * this.tileSize,
-            this.player.y * this.tileSize,
-            this.tileSize,
-            this.tileSize
+        this.ctx.fillStyle = '#D2B48C';  // Tan color
+        this.ctx.beginPath();
+        this.ctx.arc(
+            (this.player.x * this.tileSize) + (this.tileSize / 2),
+            (this.player.y * this.tileSize) + (this.tileSize / 2),
+            this.tileSize / 2 - 2,  // Slightly smaller than the tile to leave a small gap
+            0,
+            Math.PI * 2
         );
+        this.ctx.fill();
     }
 
     gameLoop() {
