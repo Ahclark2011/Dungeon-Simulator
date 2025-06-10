@@ -1,15 +1,26 @@
 // --- Room-based endless dungeon ---
-const ROOM_SIZE = 20;
+const ROOM_SIZE = 32;
 const TILE_SIZE = 64;
 const DOOR_WIDTH = 2; // doors are 2 tiles wide
 
+class Enemy {
+    constructor(x, y, radius = TILE_SIZE / 2 - 6) {
+        this.x = x;
+        this.y = y;
+        this.radius = radius;
+        this.color = '#c0392b'; // red
+    }
+}
+
 class Room {
-    constructor(roomX, roomY, neighbors) {
+    constructor(roomX, roomY, neighbors, playerSpawn) {
         this.roomX = roomX;
         this.roomY = roomY;
         this.grid = Array(ROOM_SIZE).fill().map(() => Array(ROOM_SIZE).fill(1));
         this.doors = this.generateDoors(neighbors);
         this.carveRoom();
+        this.enemies = [];
+        this.spawnEnemies(playerSpawn);
     }
 
     generateDoors(neighbors) {
@@ -78,6 +89,34 @@ class Room {
         }
     }
 
+    spawnEnemies(playerSpawn) {
+        // 2-5 enemies per room
+        const numEnemies = Math.floor(Math.random() * 4) + 2;
+        let attempts = 0;
+        while (this.enemies.length < numEnemies && attempts < 100) {
+            attempts++;
+            const x = Math.floor(Math.random() * (ROOM_SIZE - 2)) + 1;
+            const y = Math.floor(Math.random() * (ROOM_SIZE - 2)) + 1;
+            if (this.grid[y][x] !== 0) continue;
+            // Don't spawn on player
+            if (playerSpawn) {
+                const px = playerSpawn[0];
+                const py = playerSpawn[1];
+                if (Math.abs(x - px) < 2 && Math.abs(y - py) < 2) continue;
+            }
+            // Don't overlap other enemies
+            let overlap = false;
+            for (const e of this.enemies) {
+                if (Math.abs(e.x - x) < 2 && Math.abs(e.y - y) < 2) {
+                    overlap = true;
+                    break;
+                }
+            }
+            if (overlap) continue;
+            this.enemies.push(new Enemy(x * TILE_SIZE + TILE_SIZE / 2, y * TILE_SIZE + TILE_SIZE / 2));
+        }
+    }
+
     isWall(localX, localY) {
         if (localX < 0 || localX >= ROOM_SIZE || localY < 0 || localY >= ROOM_SIZE) return true;
         return this.grid[localY][localX] === 1;
@@ -89,7 +128,7 @@ class RoomDungeon {
         this.rooms = new Map(); // key: `${roomX},${roomY}`
     }
 
-    getRoom(roomX, roomY) {
+    getRoom(roomX, roomY, playerSpawn) {
         const key = `${roomX},${roomY}`;
         if (!this.rooms.has(key)) {
             // Find neighbors
@@ -99,7 +138,7 @@ class RoomDungeon {
                 E: this.rooms.get(`${roomX+1},${roomY}`) || null,
                 W: this.rooms.get(`${roomX-1},${roomY}`) || null,
             };
-            this.rooms.set(key, new Room(roomX, roomY, neighbors));
+            this.rooms.set(key, new Room(roomX, roomY, neighbors, playerSpawn));
         }
         return this.rooms.get(key);
     }
@@ -130,16 +169,25 @@ class RoomDungeon {
             }
         }
     }
+
+    getEnemiesInRoom(px, py) {
+        const gx = Math.floor(px / TILE_SIZE);
+        const gy = Math.floor(py / TILE_SIZE);
+        const roomX = Math.floor(gx / ROOM_SIZE);
+        const roomY = Math.floor(gy / ROOM_SIZE);
+        return this.getRoom(roomX, roomY).enemies;
+    }
 }
 
 class Player {
     constructor(dungeon) {
         this.radius = TILE_SIZE / 2 - 2;
         // Find a valid spawn position in the center of the starting room
-        const [spawnX, spawnY] = this.findValidSpawn(dungeon);
+        const [spawnX, spawnY, spawnTile] = this.findValidSpawn(dungeon);
         this.x = spawnX;
         this.y = spawnY;
         this.speed = 300;
+        this.spawnTile = spawnTile;
     }
 
     findValidSpawn(dungeon) {
@@ -153,13 +201,13 @@ class Player {
                     const lx = center + dx;
                     const ly = center + dy;
                     if (lx >= 0 && lx < ROOM_SIZE && ly >= 0 && ly < ROOM_SIZE && room.grid[ly][lx] === 0) {
-                        return [lx * TILE_SIZE + TILE_SIZE / 2, ly * TILE_SIZE + TILE_SIZE / 2];
+                        return [lx * TILE_SIZE + TILE_SIZE / 2, ly * TILE_SIZE + TILE_SIZE / 2, [lx, ly]];
                     }
                 }
             }
         }
         // fallback
-        return [center * TILE_SIZE + TILE_SIZE / 2, center * TILE_SIZE + TILE_SIZE / 2];
+        return [center * TILE_SIZE + TILE_SIZE / 2, center * TILE_SIZE + TILE_SIZE / 2, [center, center]];
     }
 
     tryMove(dx, dy, dt, dungeon) {
@@ -246,6 +294,14 @@ class Game {
                 }
             }
         );
+        // Draw enemies in current room
+        const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
+        for (const enemy of enemies) {
+            this.ctx.fillStyle = enemy.color;
+            this.ctx.beginPath();
+            this.ctx.arc(offsetX + enemy.x, offsetY + enemy.y, enemy.radius, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
         this.ctx.fillStyle = '#D2B48C';
         this.ctx.beginPath();
         this.ctx.arc(screenW / 2, screenH / 2, this.player.radius, 0, Math.PI * 2);
