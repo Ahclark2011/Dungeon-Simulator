@@ -307,6 +307,7 @@ class Player {
         this.hands = [0, 0];
         this.swingStartAngle = 0;
         this.swingDir = 1;
+        this.hitEnemiesThisSwing = new Set();
     }
 
     findValidSpawn(dungeon) {
@@ -362,7 +363,8 @@ class Player {
             this.swinging = true;
             this.swingTime = 0;
             this.swingStartAngle = mouseAngle;
-            this.swingDir = 1; // always swing in the same direction (clockwise)
+            this.swingDir = 1;
+            this.hitEnemiesThisSwing = new Set(); // reset hit tracking
         }
     }
 
@@ -519,6 +521,7 @@ class Game {
         const [p1, p2] = this.player.getSwordLine();
         for (const enemy of enemies) {
             if (enemy.dead) continue;
+            if (this.player.hitEnemiesThisSwing.has(enemy)) continue;
             // Closest point on sword line to enemy center
             const ex = enemy.x, ey = enemy.y;
             const x1 = p1[0], y1 = p1[1], x2 = p2[0], y2 = p2[1];
@@ -533,6 +536,7 @@ class Game {
                 const kx = (enemy.x - this.player.x) / Math.max(1, Math.sqrt((enemy.x - this.player.x)**2 + (enemy.y - this.player.y)**2));
                 const ky = (enemy.y - this.player.y) / Math.max(1, Math.sqrt((enemy.x - this.player.x)**2 + (enemy.y - this.player.y)**2));
                 enemy.takeDamage(kx, ky, 1);
+                this.player.hitEnemiesThisSwing.add(enemy);
             }
         }
     }
