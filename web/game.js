@@ -8,6 +8,7 @@ class Enemy {
         this.x = x;
         this.y = y;
         this.radius = radius;
+        this.avoidanceRadius = radius + 10; // New: Larger radius for wall avoidance
         this.color = '#c0392b'; // red
         this.speed = 120;
         this.reload = 0; // attack cooldown
@@ -18,21 +19,51 @@ class Enemy {
         this.damageNumbers = [];
     }
     addDamageNumber(amount) {
-        // Random offset within enemy circle
+        // Random position within enemy circle
         const angle = Math.random() * 2 * Math.PI;
-        const r = Math.random() * (this.radius - 10);
+        const r = Math.random() * this.radius; // Use full radius for more spread
         const ox = Math.cos(angle) * r;
-        const oy = Math.sin(angle) * r;
+        const oy = Math.sin(angle) * r - 20; // Start 20 pixels higher
         this.damageNumbers.push({
             amount,
             ox,
             oy,
-            t: 0
+            t: 0,
+            fadeStart: 0.5, // Start fading after 0.5 seconds
+            opacity: 1.0,
+            vy: 50, // Start moving downward
+            gravity: 600, // Reduced gravity for more controlled falling
+            bounce: 0.8, // Increased bounce for more dramatic bounces
+            originalY: oy // Store the original Y position for bounce reference
         });
     }
     updateDamageNumbers(dt) {
-        this.damageNumbers.forEach(dn => dn.t += dt);
-        this.damageNumbers = this.damageNumbers.filter(dn => dn.t < 1.0);
+        this.damageNumbers.forEach(dn => {
+            dn.t += dt;
+            // Only start fading after fadeStart time
+            if (dn.t > dn.fadeStart) {
+                dn.opacity = Math.max(0, 1.0 - ((dn.t - dn.fadeStart) * 1.2));
+            }
+            
+            // Apply gravity and bounce
+            dn.vy += dn.gravity * dt;
+            dn.oy += dn.vy * dt;
+            
+            // If the number has fallen below its original position and is moving down
+            if (dn.oy > dn.originalY + 30 && dn.vy > 0) { // Added offset for more bounce room
+                // Bounce with reduced velocity
+                dn.vy = -dn.vy * dn.bounce;
+                // If the bounce is too small, stop the number
+                if (Math.abs(dn.vy) < 30) { // Reduced minimum velocity for more bounces
+                    dn.vy = 0;
+                    dn.oy = dn.originalY + 30; // Stop at the bounce point
+                }
+            }
+        });
+        // Remove numbers that have faded out or stopped moving
+        this.damageNumbers = this.damageNumbers.filter(dn => 
+            dn.t < 2.0 && (dn.vy !== 0 || dn.oy !== dn.originalY + 30)
+        );
     }
     moveToward(player, dt, others, dungeon) {
         if (this.dead) return;
@@ -52,7 +83,7 @@ class Enemy {
         let dx = player.x - this.x;
         let dy = player.y - this.y;
         let dist = Math.sqrt(dx*dx + dy*dy);
-        let stopDist = this.radius + player.radius - 6; // allow a little overlap
+        let stopDist = this.radius + player.radius; // Removed the -6 to allow closer approach
         if (dist > 0 && dist > stopDist) {
             dx /= dist;
             dy /= dist;
@@ -81,15 +112,15 @@ class Enemy {
         // Try to move, but don't go through walls or out of bounds
         const tryMove = (nx, ny) => {
             for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 4) {
-                const checkX = nx + Math.cos(angle) * this.radius;
-                const checkY = ny + Math.sin(angle) * this.radius;
+                const checkX = nx + Math.cos(angle) * this.avoidanceRadius; // Use avoidanceRadius
+                const checkY = ny + Math.sin(angle) * this.avoidanceRadius; // Use avoidanceRadius
                 if (dungeon.isWallAtPixel(checkX, checkY)) return false;
             }
             if (nx < -10000 || nx > 10000 || ny < -10000 || ny > 10000) return false;
-            // Don't move into player
+            // Don't move into player, but allow closer approach
             const px = player.x - nx;
             const py = player.y - ny;
-            if (Math.sqrt(px*px + py*py) < this.radius + player.radius - 2) return false;
+            if (Math.sqrt(px*px + py*py) < this.radius + player.radius - 4) return false; // Changed from -2 to -4
             return true;
         };
         if (tryMove(this.x + vx, this.y)) this.x += vx;
@@ -100,7 +131,7 @@ class Enemy {
         const dx = player.x - this.x;
         const dy = player.y - this.y;
         const dist = Math.sqrt(dx*dx + dy*dy);
-        return dist < this.radius + player.radius - 2;
+        return dist < this.radius + player.radius + 4; // Changed from -2 to +4 to increase attack range
     }
     takeDamage(knockX, knockY, amount = 1) {
         if (this.dead) return;
@@ -119,72 +150,80 @@ class Enemy {
 }
 
 class Room {
-    constructor(roomX, roomY, neighbors, playerSpawn, isStartRoom = false) {
+    constructor(roomX, roomY) {
         this.roomX = roomX;
         this.roomY = roomY;
+        this.enemies = [];
         this.grid = Array(ROOM_SIZE).fill().map(() => Array(ROOM_SIZE).fill(1));
+        this.doors = {}; // Initialize doors as empty, they will be generated in setupRoom
+        this.hasGeneratedEnemies = false; // Flag to ensure enemies are spawned only once
+    }
+
+    setupRoom(neighbors, playerSpawn, isStartRoom = false) {
+        this.neighbors = neighbors;
         this.doors = this.generateDoors(neighbors);
         this.carveRoom();
-        this.enemies = [];
-        this.spawned = false;
-        // Always spawn enemies, only avoid player spawn in start room
-        this.spawnEnemies(isStartRoom ? playerSpawn : null);
+        this.spawnEnemies(playerSpawn);
     }
 
     generateDoors(neighbors) {
-        // neighbors: {N: Room|null, S: Room|null, E: Room|null, W: Room|null}
-        const walls = ['N', 'S', 'E', 'W'];
-        let doors = [];
-        let doorPositions = {};
-        // 1. Always add doors to connect to existing neighbors, aligned with their doors
-        for (const dir of walls) {
-            if (neighbors[dir] && neighbors[dir].doors) {
-                // Align with neighbor's door
-                if (dir === 'N' && neighbors[dir].doors['S'] !== undefined) {
-                    doors.push('N');
-                    doorPositions['N'] = neighbors[dir].doors['S'];
-                }
-                if (dir === 'S' && neighbors[dir].doors['N'] !== undefined) {
-                    doors.push('S');
-                    doorPositions['S'] = neighbors[dir].doors['N'];
-                }
-                if (dir === 'E' && neighbors[dir].doors['W'] !== undefined) {
-                    doors.push('E');
-                    doorPositions['E'] = neighbors[dir].doors['W'];
-                }
-                if (dir === 'W' && neighbors[dir].doors['E'] !== undefined) {
-                    doors.push('W');
-                    doorPositions['W'] = neighbors[dir].doors['E'];
-                }
-            }
+        const doors = {};
+        const wallPositions = {
+            N: Math.floor(ROOM_SIZE / 2) - Math.floor(DOOR_WIDTH / 2),
+            S: Math.floor(ROOM_SIZE / 2) - Math.floor(DOOR_WIDTH / 2),
+            E: Math.floor(ROOM_SIZE / 2) - Math.floor(DOOR_WIDTH / 2),
+            W: Math.floor(ROOM_SIZE / 2) - Math.floor(DOOR_WIDTH / 2)
+        };
+
+        // 1. Prioritize connecting to existing neighbors with matching doors
+        if (neighbors.N && neighbors.N.doors && neighbors.N.doors.S !== undefined) {
+            doors.N = neighbors.N.doors.S;
         }
-        // 2. Add random doors until we have at least 3, but only if no neighbor exists in that direction
-        while (doors.length < 3) {
-            const dir = walls[Math.floor(Math.random() * 4)];
-            if (!doors.includes(dir) && !neighbors[dir]) {
-                if (dir === 'N' || dir === 'S') {
-                    let x = Math.floor(Math.random() * (ROOM_SIZE - 2 - DOOR_WIDTH + 1)) + 1;
-                    doorPositions[dir] = x;
-                } else {
-                    let y = Math.floor(Math.random() * (ROOM_SIZE - 2 - DOOR_WIDTH + 1)) + 1;
-                    doorPositions[dir] = y;
-                }
-                doors.push(dir);
-            }
+        if (neighbors.S && neighbors.S.doors && neighbors.S.doors.N !== undefined) {
+            doors.S = neighbors.S.doors.N;
         }
-        return doorPositions;
+        if (neighbors.E && neighbors.E.doors && neighbors.E.doors.W !== undefined) {
+            doors.E = neighbors.E.doors.W;
+        }
+        if (neighbors.W && neighbors.W.doors && neighbors.W.doors.E !== undefined) {
+            doors.W = neighbors.W.doors.E;
+        }
+
+        // 2. Add random doors until we have at least 3, only if not already connected to a neighbor
+        const possibleDirections = ['N', 'S', 'E', 'W'];
+        const availableDirections = possibleDirections.filter(dir => doors[dir] === undefined);
+
+        // Shuffle available directions to randomize which ones are chosen
+        for (let i = availableDirections.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [availableDirections[i], availableDirections[j]] = [availableDirections[j], availableDirections[i]];
+        }
+        
+        for (let i = 0; Object.keys(doors).length < 3 && i < availableDirections.length; i++) {
+            const dir = availableDirections[i];
+            doors[dir] = wallPositions[dir]; // Use the consistent centered position
+        }
+        
+        return doors;
     }
 
     carveRoom() {
-        // Make the room open space
-        for (let y = 1; y < ROOM_SIZE - 1; y++) {
-            for (let x = 1; x < ROOM_SIZE - 1; x++) {
-                this.grid[y][x] = 0;
+        // Initialize all tiles to wall (1)
+        for (let y = 0; y < ROOM_SIZE; y++) {
+            for (let x = 0; x < ROOM_SIZE; x++) {
+                this.grid[y][x] = 1; 
             }
         }
-        // Carve doors
-        for (const dir in this.doors) {
-            const pos = this.doors[dir];
+
+        // Carve out the main playable area (floor) with a 1-tile wall border
+        for (let y = 1; y < ROOM_SIZE - 1; y++) {
+            for (let x = 1; x < ROOM_SIZE - 1; x++) {
+                this.grid[y][x] = 0; // Set to floor (0)
+            }
+        }
+        
+        // Carve out doors
+        for (const [dir, pos] of Object.entries(this.doors)) {
             if (dir === 'N') {
                 for (let i = 0; i < DOOR_WIDTH; i++) this.grid[0][pos + i] = 0;
             } else if (dir === 'S') {
@@ -198,31 +237,28 @@ class Room {
     }
 
     spawnEnemies(playerSpawn) {
-        if (this.spawned) return;
-        this.spawned = true;
-        const numEnemies = Math.floor(Math.random() * 4) + 2;
-        let attempts = 0;
-        while (this.enemies.length < numEnemies && attempts < 100) {
-            attempts++;
-            const x = Math.floor(Math.random() * (ROOM_SIZE - 2)) + 1;
-            const y = Math.floor(Math.random() * (ROOM_SIZE - 2)) + 1;
-            if (this.grid[y][x] !== 0) continue;
-            // Only avoid player spawn for starting room
-            if (playerSpawn) {
-                const px = playerSpawn[0];
-                const py = playerSpawn[1];
-                if (Math.abs(x - px) < 2 && Math.abs(y - py) < 2) continue;
-            }
-            let overlap = false;
-            for (const e of this.enemies) {
-                if (Math.abs(e.x - x) < 2 && Math.abs(e.y - y) < 2) {
-                    overlap = true;
-                    break;
-                }
-            }
-            if (overlap) continue;
-            this.enemies.push(new Enemy(x * TILE_SIZE + TILE_SIZE / 2, y * TILE_SIZE + TILE_SIZE / 2));
+        // Only spawn enemies if they haven't been spawned yet
+        if (this.hasGeneratedEnemies) return;
+        
+        const numEnemies = Math.floor(Math.random() * 3) + 2; // 2-4 enemies
+        console.log(`[Room] Spawning ${numEnemies} enemies in room: (${this.roomX}, ${this.roomY})`);
+        for (let i = 0; i < numEnemies; i++) {
+            let x, y;
+            do {
+                x = Math.floor(Math.random() * (ROOM_SIZE - 4)) + 2;
+                y = Math.floor(Math.random() * (ROOM_SIZE - 4)) + 2;
+            } while (
+                this.grid[y][x] !== 0 || 
+                (playerSpawn && Math.abs(x - playerSpawn[0]) < 3 && Math.abs(y - playerSpawn[1]) < 3)
+            );
+            
+            const enemy = new Enemy(
+                (this.roomX * ROOM_SIZE + x) * TILE_SIZE + TILE_SIZE/2,
+                (this.roomY * ROOM_SIZE + y) * TILE_SIZE + TILE_SIZE/2
+            );
+            this.enemies.push(enemy);
         }
+        this.hasGeneratedEnemies = true;
     }
 
     isWall(localX, localY) {
@@ -235,74 +271,112 @@ class RoomDungeon {
     constructor() {
         this.rooms = new Map();
         this.lastRoomKey = null;
+        this.roomCount = 0; // Re-introduce room count for potential future limits
+        this.ROOM_LIMIT = 10000; // Set a high limit for now
     }
+
     generateRoom(roomX, roomY, playerSpawn, isStartRoom = false) {
         const key = `${roomX},${roomY}`;
         if (!this.rooms.has(key)) {
-            console.log('Generating room:', roomX, roomY, 'isStartRoom:', isStartRoom);
+            if (this.roomCount >= this.ROOM_LIMIT) {
+                console.error('ROOM LIMIT EXCEEDED! Not generating more rooms.');
+                return undefined;
+            }
+            this.roomCount++;
+            console.log(`[RoomDungeon] Generating room: (${roomX}, ${roomY}), total rooms: ${this.roomCount}, isStartRoom: ${isStartRoom}`);
+            
             const neighbors = {
                 N: this.rooms.get(`${roomX},${roomY-1}`) || null,
                 S: this.rooms.get(`${roomX},${roomY+1}`) || null,
                 E: this.rooms.get(`${roomX+1},${roomY}`) || null,
                 W: this.rooms.get(`${roomX-1},${roomY}`) || null,
             };
-            const room = new Room(roomX, roomY, neighbors, playerSpawn, isStartRoom);
-            room.spawnEnemies(playerSpawn);
+            
+            const room = new Room(roomX, roomY);
             this.rooms.set(key, room);
         }
         return this.rooms.get(key);
     }
+
     loadAdjacentRooms(centerX, centerY, playerSpawn, isStartRoom = false) {
-        // Only generate rooms, do not trigger any further generation
+        console.log(`[RoomDungeon] Loading adjacent rooms for center: (${centerX}, ${centerY})`);
+        
+        // Pass 1: Ensure all rooms in the 3x3 grid are created and added to the map
         for (let dx = -1; dx <= 1; dx++) {
             for (let dy = -1; dy <= 1; dy++) {
                 const nx = centerX + dx;
                 const ny = centerY + dy;
-                this.generateRoom(
-                    nx,
-                    ny,
-                    (dx === 0 && dy === 0) ? playerSpawn : null,
-                    (nx === 0 && ny === 0 && isStartRoom)
-                );
+                this.generateRoom(nx, ny); // Just create the room, no setup yet
+            }
+        }
+
+        // Pass 2: Now that all rooms exist, setup each room (generate doors, carve, spawn enemies)
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                const nx = centerX + dx;
+                const ny = centerY + dy;
+                const room = this.getRoom(nx, ny);
+                if (room) {
+                    // Gather neighbors for the current room from the already generated rooms
+                    const neighbors = {
+                        N: this.getRoom(nx, ny - 1),
+                        S: this.getRoom(nx, ny + 1),
+                        E: this.getRoom(nx + 1, ny),
+                        W: this.getRoom(nx - 1, ny),
+                    };
+                    // Determine if this is the player's current room for enemy spawning
+                    const currentRoomPlayerSpawn = (dx === 0 && dy === 0) ? playerSpawn : null;
+                    const currentRoomIsStartRoom = (nx === 0 && ny === 0 && isStartRoom);
+
+                    room.setupRoom(neighbors, currentRoomPlayerSpawn, currentRoomIsStartRoom);
+                }
             }
         }
     }
+
     getRoom(roomX, roomY) {
-        const key = `${roomX},${roomY}`;
-        return this.rooms.get(key);
+        return this.rooms.get(`${roomX},${roomY}`);
     }
+
     isWallAtPixel(px, py) {
         const gx = Math.floor(px / TILE_SIZE);
         const gy = Math.floor(py / TILE_SIZE);
         const roomX = Math.floor(gx / ROOM_SIZE);
         const roomY = Math.floor(gy / ROOM_SIZE);
-        const localX = ((gx % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE;
-        const localY = ((gy % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE;
-        return this.getRoom(roomX, roomY).isWall(localX, localY);
+        const localX = ((gx % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE; // Ensure positive modulo
+        const localY = ((gy % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE; // Ensure positive modulo
+
+        console.log(`[isWallAtPixel] Global tile: (${gx}, ${gy}), Room: (${roomX}, ${roomY}), Local tile: (${localX}, ${localY})`);
+
+        const room = this.getRoom(roomX, roomY);
+        console.log(`[isWallAtPixel] Retrieved room: ${room ? 'Exists' : 'Undefined/Null'}`);
+
+        return room?.isWall(localX, localY) ?? true;
     }
+
     forEachVisibleTile(centerPx, centerPy, screenW, screenH, callback) {
         const halfTilesX = Math.ceil(screenW / (2 * TILE_SIZE)) + 2;
         const halfTilesY = Math.ceil(screenH / (2 * TILE_SIZE)) + 2;
-        const centerGx = Math.floor(centerPx / TILE_SIZE);
-        const centerGy = Math.floor(centerPy / TILE_SIZE);
-        for (let gy = centerGy - halfTilesY; gy <= centerGy + halfTilesY; gy++) {
-            for (let gx = centerGx - halfTilesX; gx <= centerGx + halfTilesX; gx++) {
+        const centerTileX = Math.floor(centerPx / TILE_SIZE);
+        const centerTileY = Math.floor(centerPy / TILE_SIZE);
+        
+        for (let dy = -halfTilesY; dy <= halfTilesY; dy++) {
+            for (let dx = -halfTilesX; dx <= halfTilesX; dx++) {
+                const gx = centerTileX + dx;
+                const gy = centerTileY + dy;
                 const roomX = Math.floor(gx / ROOM_SIZE);
                 const roomY = Math.floor(gy / ROOM_SIZE);
-                const localX = ((gx % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE;
-                const localY = ((gy % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE;
-                // Always generate the room if it doesn't exist (for rendering)
+                const localX = ((gx % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE; // Ensure positive modulo
+                const localY = ((gy % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE; // Ensure positive modulo
+                
                 const room = this.generateRoom(roomX, roomY, null, false);
-                callback(gx, gy, room.grid[localY][localX]);
+                if (room && room.grid) {
+                    callback(gx, gy, room.grid[localY][localX]);
+                } else {
+                    callback(gx, gy, 1);
+                }
             }
         }
-    }
-    getEnemiesInRoom(px, py) {
-        const gx = Math.floor(px / TILE_SIZE);
-        const gy = Math.floor(py / TILE_SIZE);
-        const roomX = Math.floor(gx / ROOM_SIZE);
-        const roomY = Math.floor(gy / ROOM_SIZE);
-        return this.getRoom(roomX, roomY).enemies;
     }
 }
 
@@ -315,7 +389,6 @@ class Player {
         this.speed = 300;
         this.spawnTile = spawnTile;
         this.hp = 5;
-        this.invuln = 0;
         this.swinging = false;
         this.swingAngle = 0;
         this.swingTime = 0;
@@ -349,23 +422,33 @@ class Player {
     tryMove(dx, dy, dt, dungeon) {
         const newX = this.x + dx * this.speed * dt;
         const newY = this.y + dy * this.speed * dt;
-        if (!this.collidesWithWall(newX, this.y, dungeon)) {
+        const collidedX = this.collidesWithWall(newX, this.y, dungeon);
+        const collidedY = this.collidesWithWall(this.x, newY, dungeon);
+        console.log(`[Player.tryMove] Attempting move to (${newX.toFixed(2)}, ${newY.toFixed(2)}). Collided X: ${collidedX}, Collided Y: ${collidedY}`);
+
+        if (!collidedX) {
             this.x = newX;
         }
-        if (!this.collidesWithWall(this.x, newY, dungeon)) {
+        if (!collidedY) {
             this.y = newY;
         }
     }
 
     collidesWithWall(px, py, dungeon) {
+        let isColliding = false;
         for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 4) {
             const checkX = px + Math.cos(angle) * this.radius;
             const checkY = py + Math.sin(angle) * this.radius;
-            if (dungeon.isWallAtPixel(checkX, checkY)) {
-                return true;
+            const wallAtPixel = dungeon.isWallAtPixel(checkX, checkY);
+            if (wallAtPixel) {
+                isColliding = true;
+                // Log the exact collision point
+                console.log(`[Player.collidesWithWall] Collision detected at pixel (${checkX.toFixed(2)}, ${checkY.toFixed(2)}). Original player pos: (${px.toFixed(2)}, ${py.toFixed(2)})`);
+                break; // Found a collision, no need to check further angles
             }
         }
-        return false;
+        console.log(`[Player.collidesWithWall] Final collision result for (${px.toFixed(2)}, ${py.toFixed(2)}): ${isColliding}`);
+        return isColliding;
     }
 
     updateMouse(mouseX, mouseY, camX, camY) {
@@ -423,7 +506,7 @@ class Player {
         const dx = h2[0] - h1[0];
         const dy = h2[1] - h1[1];
         const len = Math.sqrt(dx*dx + dy*dy);
-        const ext = 40;
+        const ext = 80; // Increased from 40 to 80 for longer sword
         return [h1, [h2[0] + dx/len*ext, h2[1] + dy/len*ext]];
     }
 }
@@ -433,14 +516,23 @@ class Game {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
         this.dungeon = new RoomDungeon();
-        // Generate starting room and neighbors before creating player
-        this.dungeon.loadAdjacentRooms(0, 0, null, true);
+
+        // 1. Generate the initial room (0,0) so player can find a valid spawn location
+        this.dungeon.generateRoom(0, 0, null, true);
+
+        // 2. Create player (needs room (0,0) to exist for findValidSpawn)
         this.player = new Player(this.dungeon);
+
+        // 3. Now load adjacent rooms, using player's actual spawn tile for enemy exclusion in room (0,0)
+        // Note: loadAdjacentRooms will call generateRoom for (0,0) again, but it won't re-create it or re-spawn enemies.
+        this.dungeon.loadAdjacentRooms(0, 0, this.player.spawnTile, true);
+
         this.keys = {};
         this.lastTime = null;
         this.mouseX = 0;
         this.mouseY = 0;
         this.setupEventListeners();
+        this.currentRoomKey = null; // Used to track player's current room for loading adjacent rooms
         requestAnimationFrame((ts) => this.gameLoop(ts));
     }
 
@@ -489,7 +581,6 @@ class Game {
     }
 
     updateEnemies(dt) {
-        // Only generate rooms when entering a new room
         const gx = Math.floor(this.player.x / TILE_SIZE);
         const gy = Math.floor(this.player.y / TILE_SIZE);
         const roomX = Math.floor(gx / ROOM_SIZE);
@@ -497,30 +588,65 @@ class Game {
         const isStartRoom = (roomX === 0 && roomY === 0);
         const playerSpawn = isStartRoom ? this.player.spawnTile : null;
         const key = `${roomX},${roomY}`;
-        if (this.dungeon.lastRoomKey !== key) {
+
+        if (this.currentRoomKey !== key) {
+            console.log(`[Game] Player entering room: (${roomX}, ${roomY})`);
             this.dungeon.loadAdjacentRooms(roomX, roomY, playerSpawn, isStartRoom);
-            this.dungeon.lastRoomKey = key;
+            this.currentRoomKey = key;
         }
-        const enemies = this.dungeon.getRoom(roomX, roomY)?.enemies || [];
-        for (let i = enemies.length - 1; i >= 0; i--) {
-            const enemy = enemies[i];
+
+        // Get enemies from current room and its 8 neighbors
+        const visibleEnemies = [];
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const currentRoom = this.dungeon.getRoom(roomX + dx, roomY + dy);
+                if (currentRoom) {
+                    visibleEnemies.push(...currentRoom.enemies);
+                }
+            }
+        }
+
+        for (let i = visibleEnemies.length - 1; i >= 0; i--) {
+            const enemy = visibleEnemies[i];
             enemy.updateDamageNumbers(dt);
+            
             if (enemy.dead) {
                 enemy.deathTimer -= dt;
+                console.log(`[DEBUG] Dead enemy deathTimer: ${enemy.deathTimer.toFixed(3)}`);
                 if (enemy.deathTimer <= 0) {
-                    enemies.splice(i, 1); // remove after indicator
+                    // Find the room this enemy belongs to and remove it
+                    const enemyRoomX = Math.floor(enemy.x / TILE_SIZE / ROOM_SIZE);
+                    const enemyRoomY = Math.floor(enemy.y / TILE_SIZE / ROOM_SIZE);
+                    const enemyRoom = this.dungeon.getRoom(enemyRoomX, enemyRoomY);
+                    console.log(`[DEBUG] Attempting to remove enemy. Enemy position: (${enemy.x}, ${enemy.y}), calculated room: (${enemyRoomX}, ${enemyRoomY})`);
+                    if (enemyRoom) {
+                        const indexInRoom = enemyRoom.enemies.indexOf(enemy);
+                        console.log(`[DEBUG] Enemy room found. Index in room: ${indexInRoom}, enemies in room before splice: ${enemyRoom.enemies.length}`);
+                        if (indexInRoom > -1) {
+                            enemyRoom.enemies.splice(indexInRoom, 1);
+                            console.log(`[Game] Removed dead enemy from room (${enemyRoomX}, ${enemyRoomY}). Enemies in room after splice: ${enemyRoom.enemies.length}`);
+                        } else {
+                            console.log(`[DEBUG] Enemy not found in room. This should not happen. Re-checking room contents.`);
+                            const foundEnemy = enemyRoom.enemies.find(e => e === enemy);
+                            if (foundEnemy) {
+                                console.log("[DEBUG] Enemy found via find, but not indexOf. This is unexpected.");
+                            }
+                        }
+                    } else {
+                        console.log(`[DEBUG] Enemy room not found for coordinates (${enemyRoomX}, ${enemyRoomY}). Enemy might be stuck.`);
+                    }
                 }
                 continue;
             }
-            enemy.moveToward(this.player, dt, enemies, this.dungeon);
+
+            enemy.moveToward(this.player, dt, visibleEnemies, this.dungeon);
+            
             if (enemy.reload > 0) enemy.reload -= dt;
-            if (enemy.canAttack(this.player) && enemy.reload <= 0 && this.player.invuln <= 0) {
+            if (enemy.canAttack(this.player) && enemy.reload <= 0) {
                 this.player.hp--;
-                this.player.invuln = 1.0;
                 enemy.reload = 1.0;
             }
         }
-        if (this.player.invuln > 0) this.player.invuln -= dt;
     }
 
     updatePlayer(dt) {
@@ -539,9 +665,20 @@ class Game {
         const gy = Math.floor(this.player.y / TILE_SIZE);
         const roomX = Math.floor(gx / ROOM_SIZE);
         const roomY = Math.floor(gy / ROOM_SIZE);
-        const enemies = this.dungeon.getRoom(roomX, roomY)?.enemies || [];
+
+        // Get enemies from current room and its 8 neighbors for sword hits
+        const visibleEnemies = [];
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const room = this.dungeon.getRoom(roomX + dx, roomY + dy);
+                if (room) {
+                    visibleEnemies.push(...room.enemies);
+                }
+            }
+        }
+
         const [p1, p2] = this.player.getSwordLine();
-        for (const enemy of enemies) {
+        for (const enemy of visibleEnemies) {
             if (enemy.dead) continue;
             if (this.player.hitEnemiesThisSwing.has(enemy)) continue;
             // Closest point on sword line to enemy center
@@ -553,7 +690,7 @@ class Game {
             const cx = x1 + t*(x2-x1);
             const cy = y1 + t*(y2-y1);
             const dist = Math.sqrt((ex-cx)*(ex-cx)+(ey-cy)*(ey-cy));
-            if (dist < enemy.radius + 8) {
+            if (dist < enemy.radius + 16) { // Increased from 8 to 16 for larger attack range
                 // Knockback direction
                 const kx = (enemy.x - this.player.x) / Math.max(1, Math.sqrt((enemy.x - this.player.x)**2 + (enemy.y - this.player.y)**2));
                 const ky = (enemy.y - this.player.y) / Math.max(1, Math.sqrt((enemy.x - this.player.x)**2 + (enemy.y - this.player.y)**2));
@@ -564,115 +701,117 @@ class Game {
     }
 
     draw() {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.fillStyle = '#FFFFFF'; // Background is white
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
         const screenW = this.canvas.width;
         const screenH = this.canvas.height;
         const camX = this.player.x;
         const camY = this.player.y;
-        const offsetX = screenW / 2 - camX;
-        const offsetY = screenH / 2 - camY;
-        this.ctx.fillStyle = '#808080';
-        this.ctx.fillRect(0, 0, screenW, screenH);
-        this.dungeon.forEachVisibleTile(
-            this.player.x, this.player.y, screenW, screenH,
-            (gx, gy, val) => {
-                const px = offsetX + gx * TILE_SIZE;
-                const py = offsetY + gy * TILE_SIZE;
-                if (val === 1) {
-                    this.ctx.fillStyle = '#808080';
-                    this.ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-                } else {
-                    this.ctx.fillStyle = '#FFFFFF';
-                    this.ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-                }
-                this.ctx.strokeStyle = '#e0e0e0';
+
+        // Draw visible tiles
+        this.dungeon.forEachVisibleTile(camX, camY, screenW, screenH, (gx, gy, type) => {
+            const drawX = gx * TILE_SIZE - camX + screenW / 2;
+            const drawY = gy * TILE_SIZE - camY + screenH / 2;
+            if (type === 1) {
+                this.ctx.fillStyle = '#808080'; // Walls - Dark Grey
+                this.ctx.fillRect(drawX, drawY, TILE_SIZE, TILE_SIZE);
+            } else if (type === 0) {
+                this.ctx.fillStyle = '#FFFFFF'; // Floors - White
+                this.ctx.fillRect(drawX, drawY, TILE_SIZE, TILE_SIZE);
+                this.ctx.strokeStyle = '#e0e0e0'; // Grid lines on top of floor
                 this.ctx.lineWidth = 1;
-                this.ctx.strokeRect(px, py, TILE_SIZE, TILE_SIZE);
+                this.ctx.strokeRect(drawX, drawY, TILE_SIZE, TILE_SIZE);
             }
-        );
-        // Draw enemies in current room
-        const gx = Math.floor(this.player.x / TILE_SIZE);
-        const gy = Math.floor(this.player.y / TILE_SIZE);
-        const roomX = Math.floor(gx / ROOM_SIZE);
-        const roomY = Math.floor(gy / ROOM_SIZE);
-        const enemies = this.dungeon.getRoom(roomX, roomY)?.enemies || [];
-        for (const enemy of enemies) {
-            if (enemy.dead) {
-                // Draw a red X for dead enemies
-                this.ctx.save();
-                this.ctx.globalAlpha = Math.max(0, enemy.deathTimer);
-                this.ctx.strokeStyle = '#ff2222';
-                this.ctx.lineWidth = 8;
-                this.ctx.beginPath();
-                this.ctx.moveTo(offsetX + enemy.x - enemy.radius, offsetY + enemy.y - enemy.radius);
-                this.ctx.lineTo(offsetX + enemy.x + enemy.radius, offsetY + enemy.y + enemy.radius);
-                this.ctx.moveTo(offsetX + enemy.x + enemy.radius, offsetY + enemy.y - enemy.radius);
-                this.ctx.lineTo(offsetX + enemy.x - enemy.radius, offsetY + enemy.y + enemy.radius);
-                this.ctx.stroke();
-                this.ctx.restore();
-            }
-            if (!enemy.dead) {
-                this.ctx.fillStyle = enemy.color;
-                this.ctx.beginPath();
-                this.ctx.arc(offsetX + enemy.x, offsetY + enemy.y, enemy.radius, 0, Math.PI * 2);
-                this.ctx.fill();
-            }
-            // Draw damage numbers
-            for (const dn of enemy.damageNumbers) {
-                // Animate: drop, bounce, drop, fade out
-                let y = -30 * dn.t + 20 * Math.sin(Math.PI * dn.t);
-                let alpha = 1.0 - dn.t;
-                this.ctx.save();
-                this.ctx.globalAlpha = Math.max(0, alpha);
-                this.ctx.fillStyle = '#ffcc00';
-                this.ctx.font = 'bold 32px Arial';
-                this.ctx.textAlign = 'center';
-                this.ctx.fillText(
-                    dn.amount,
-                    offsetX + enemy.x + dn.ox,
-                    offsetY + enemy.y + dn.oy + y
-                );
-                this.ctx.restore();
+        });
+
+        // Draw enemies (from all visible rooms)
+        const playerRoomX = Math.floor(this.player.x / TILE_SIZE / ROOM_SIZE);
+        const playerRoomY = Math.floor(this.player.y / TILE_SIZE / ROOM_SIZE);
+
+        console.log(`[Game] Drawing enemies for rooms around: (${playerRoomX}, ${playerRoomY})`);
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const room = this.dungeon.getRoom(playerRoomX + dx, playerRoomY + dy);
+                if (room) {
+                    for (const enemy of room.enemies) {
+                        if (enemy.dead && enemy.deathTimer <= 0) {
+                            // Enemy is dead and its death timer has expired, so it should be removed
+                            // This case should ideally be handled by updateEnemies, but as a safeguard,
+                            // we won't draw it if it somehow slipped through.
+                            continue;
+                        }
+                        
+                        // If the enemy is dead but still within its deathTimer, it will be drawn.
+                        // You could add a fading effect here if desired, e.g., by adjusting opacity based on deathTimer.
+
+                        this.ctx.fillStyle = 'red';
+                        this.ctx.beginPath();
+                        this.ctx.arc(enemy.x - camX + screenW / 2, enemy.y - camY + screenH / 2, enemy.radius, 0, Math.PI * 2);
+                        this.ctx.fill();
+                        // Draw damage numbers with enhanced styling
+                        for (const dm of enemy.damageNumbers) {
+                            this.ctx.fillStyle = `rgba(255, 255, 0, ${dm.opacity})`; // Yellow damage numbers
+                            this.ctx.font = 'bold 20px Arial'; // Made font bigger and bold
+                            this.ctx.textAlign = 'center'; // Center the text
+                            this.ctx.fillText(
+                                dm.amount.toString(),
+                                enemy.x - camX + screenW / 2 + dm.ox,
+                                enemy.y - camY + screenH / 2 + dm.oy
+                            );
+                        }
+                    }
+                }
             }
         }
-        // Draw player hands
-        const [h1, h2] = this.player.getHandPositions();
-        this.ctx.fillStyle = '#D2B48C';
-        this.ctx.beginPath();
-        this.ctx.arc(offsetX + h1[0], offsetY + h1[1], 14, 0, Math.PI * 2);
-        this.ctx.fill();
-        this.ctx.beginPath();
-        this.ctx.arc(offsetX + h2[0], offsetY + h2[1], 14, 0, Math.PI * 2);
-        this.ctx.fill();
-        // Draw sword
-        const [s1, s2] = this.player.getSwordLine();
-        this.ctx.strokeStyle = '#888';
-        this.ctx.lineWidth = 8;
-        this.ctx.beginPath();
-        this.ctx.moveTo(offsetX + s1[0], offsetY + s1[1]);
-        this.ctx.lineTo(offsetX + s2[0], offsetY + s2[1]);
-        this.ctx.stroke();
+
         // Draw player
-        this.ctx.fillStyle = this.player.invuln > 0 ? '#ffe4b5' : '#D2B48C';
+        this.ctx.fillStyle = 'tan'; // Player color
         this.ctx.beginPath();
         this.ctx.arc(screenW / 2, screenH / 2, this.player.radius, 0, Math.PI * 2);
         this.ctx.fill();
-        // Draw HP
-        this.ctx.fillStyle = '#c0392b';
-        this.ctx.font = '32px Arial';
-        this.ctx.fillText('HP: ' + this.player.hp, 20, 40);
-        // Draw room coordinates
-        this.ctx.fillStyle = '#333';
-        this.ctx.font = '28px Arial';
-        this.ctx.textAlign = 'right';
-        this.ctx.fillText(`Room: (${roomX}, ${roomY})`, this.canvas.width - 20, 40);
-        this.ctx.textAlign = 'left';
-        // Game over
+
+        // Draw player hands (always visible)
+        const [h1, h2] = this.player.getHandPositions();
+        this.ctx.fillStyle = 'tan'; // Hands color
+        this.ctx.beginPath();
+        this.ctx.arc(h1[0] - camX + screenW / 2, h1[1] - camY + screenH / 2, this.player.radius / 2, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.beginPath();
+        this.ctx.arc(h2[0] - camX + screenW / 2, h2[1] - camY + screenH / 2, this.player.radius / 2, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        // Draw sword (always visible and correct appearance)
+        this.ctx.strokeStyle = '#888'; // Sword color: Grey
+        this.ctx.lineWidth = 8;
+        const [s1, s2] = this.player.getSwordLine();
+        this.ctx.beginPath();
+        this.ctx.moveTo(s1[0] - camX + screenW / 2, s1[1] - camY + screenH / 2);
+        this.ctx.lineTo(s2[0] - camX + screenW / 2, s2[1] - camY + screenH / 2);
+        this.ctx.stroke();
+
+        // Display player HP
+        this.ctx.fillStyle = 'red';
+        this.ctx.font = '24px Arial';
+        this.ctx.fillText(`HP: ${this.player.hp}`, 20, 40);
+
+        // Display current room coordinates
+        const currentRoomDisplayX = Math.floor(this.player.x / TILE_SIZE / ROOM_SIZE);
+        const currentRoomDisplayY = Math.floor(this.player.y / TILE_SIZE / ROOM_SIZE);
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = '24px Arial';
+        this.ctx.fillText(`Room: (${currentRoomDisplayX}, ${currentRoomDisplayY})`, screenW - 200, 40);
+
+        // Game Over screen
         if (this.player.hp <= 0) {
-            this.ctx.fillStyle = '#c0392b';
-            this.ctx.font = 'bold 80px Arial';
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; // Semi-transparent black overlay
+            this.ctx.fillRect(0, 0, screenW, screenH);
+            this.ctx.fillStyle = 'white';
+            this.ctx.font = '48px Arial';
             this.ctx.textAlign = 'center';
-            this.ctx.fillText('GAME OVER', screenW/2, screenH/2);
-            this.ctx.textAlign = 'left';
+            this.ctx.fillText('GAME OVER', screenW / 2, screenH / 2);
+            this.ctx.textAlign = 'start'; // Reset text alignment
         }
     }
 
@@ -687,7 +826,15 @@ class Game {
             this.checkSwordHits();
         }
         this.draw();
-        requestAnimationFrame((ts) => this.gameLoop(ts));
+        // Only continue game loop if player is alive
+        if (this.player.hp > 0) {
+            requestAnimationFrame((ts) => this.gameLoop(ts));
+        }
+
+        // Log player position and calculated room in every frame
+        const currentRoomDisplayX = Math.floor(this.player.x / TILE_SIZE / ROOM_SIZE);
+        const currentRoomDisplayY = Math.floor(this.player.y / TILE_SIZE / ROOM_SIZE);
+        console.log(`[GameLoop] Player pos: (${this.player.x.toFixed(2)}, ${this.player.y.toFixed(2)}), Room: (${currentRoomDisplayX}, ${currentRoomDisplayY})`);
     }
 }
 
