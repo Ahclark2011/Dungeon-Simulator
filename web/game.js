@@ -290,7 +290,8 @@ class RoomDungeon {
                 const roomY = Math.floor(gy / ROOM_SIZE);
                 const localX = ((gx % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE;
                 const localY = ((gy % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE;
-                const room = this.getRoom(roomX, roomY);
+                // Always generate the room if it doesn't exist (for rendering)
+                const room = this.generateRoom(roomX, roomY, null, false);
                 callback(gx, gy, room.grid[localY][localX]);
             }
         }
