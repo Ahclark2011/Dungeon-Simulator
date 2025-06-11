@@ -239,6 +239,7 @@ class RoomDungeon {
     generateRoom(roomX, roomY, playerSpawn, isStartRoom = false) {
         const key = `${roomX},${roomY}`;
         if (!this.rooms.has(key)) {
+            console.log('Generating room:', roomX, roomY, 'isStartRoom:', isStartRoom);
             const neighbors = {
                 N: this.rooms.get(`${roomX},${roomY-1}`) || null,
                 S: this.rooms.get(`${roomX},${roomY+1}`) || null,
