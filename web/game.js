@@ -236,8 +236,7 @@ class RoomDungeon {
         this.rooms = new Map();
         this.lastRoomKey = null;
     }
-
-    getRoom(roomX, roomY, playerSpawn, isStartRoom = false, entering = false) {
+    generateRoom(roomX, roomY, playerSpawn, isStartRoom = false) {
         const key = `${roomX},${roomY}`;
         if (!this.rooms.has(key)) {
             const neighbors = {
@@ -246,32 +245,31 @@ class RoomDungeon {
                 E: this.rooms.get(`${roomX+1},${roomY}`) || null,
                 W: this.rooms.get(`${roomX-1},${roomY}`) || null,
             };
-            this.rooms.set(key, new Room(roomX, roomY, neighbors, playerSpawn, isStartRoom));
+            const room = new Room(roomX, roomY, neighbors, playerSpawn, isStartRoom);
+            room.spawnEnemies(playerSpawn);
+            this.rooms.set(key, room);
         }
-        const room = this.rooms.get(key);
-        // Only spawn enemies when entering the room
-        if (entering) room.spawnEnemies(playerSpawn);
-        return room;
+        return this.rooms.get(key);
     }
-
-    loadAdjacentRooms(centerX, centerY, playerSpawn) {
-        // Load all 8 adjacent and diagonal rooms
+    loadAdjacentRooms(centerX, centerY, playerSpawn, isStartRoom = false) {
+        // Only generate rooms, do not trigger any further generation
         for (let dx = -1; dx <= 1; dx++) {
             for (let dy = -1; dy <= 1; dy++) {
                 const nx = centerX + dx;
                 const ny = centerY + dy;
-                // Only avoid player spawn and set entering=true for the center room
-                this.getRoom(
+                this.generateRoom(
                     nx,
                     ny,
                     (dx === 0 && dy === 0) ? playerSpawn : null,
-                    (nx === 0 && ny === 0),
-                    (dx === 0 && dy === 0) // entering=true only for center
+                    (nx === 0 && ny === 0 && isStartRoom)
                 );
             }
         }
     }
-
+    getRoom(roomX, roomY) {
+        const key = `${roomX},${roomY}`;
+        return this.rooms.get(key);
+    }
     isWallAtPixel(px, py) {
         const gx = Math.floor(px / TILE_SIZE);
         const gy = Math.floor(py / TILE_SIZE);
@@ -281,7 +279,6 @@ class RoomDungeon {
         const localY = ((gy % ROOM_SIZE) + ROOM_SIZE) % ROOM_SIZE;
         return this.getRoom(roomX, roomY).isWall(localX, localY);
     }
-
     forEachVisibleTile(centerPx, centerPy, screenW, screenH, callback) {
         const halfTilesX = Math.ceil(screenW / (2 * TILE_SIZE)) + 2;
         const halfTilesY = Math.ceil(screenH / (2 * TILE_SIZE)) + 2;
@@ -298,7 +295,6 @@ class RoomDungeon {
             }
         }
     }
-
     getEnemiesInRoom(px, py) {
         const gx = Math.floor(px / TILE_SIZE);
         const gy = Math.floor(py / TILE_SIZE);
@@ -489,7 +485,7 @@ class Game {
     }
 
     updateEnemies(dt) {
-        // Ensure enemies are spawned for current room and all adjacent/diagonal rooms
+        // Only generate rooms when entering a new room
         const gx = Math.floor(this.player.x / TILE_SIZE);
         const gy = Math.floor(this.player.y / TILE_SIZE);
         const roomX = Math.floor(gx / ROOM_SIZE);
@@ -498,10 +494,10 @@ class Game {
         const playerSpawn = isStartRoom ? this.player.spawnTile : null;
         const key = `${roomX},${roomY}`;
         if (this.dungeon.lastRoomKey !== key) {
-            this.dungeon.loadAdjacentRooms(roomX, roomY, playerSpawn);
+            this.dungeon.loadAdjacentRooms(roomX, roomY, playerSpawn, isStartRoom);
             this.dungeon.lastRoomKey = key;
         }
-        const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
+        const enemies = this.dungeon.getRoom(roomX, roomY)?.enemies || [];
         for (let i = enemies.length - 1; i >= 0; i--) {
             const enemy = enemies[i];
             enemy.updateDamageNumbers(dt);
@@ -535,7 +531,11 @@ class Game {
 
     checkSwordHits() {
         if (!this.player.swinging) return;
-        const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
+        const gx = Math.floor(this.player.x / TILE_SIZE);
+        const gy = Math.floor(this.player.y / TILE_SIZE);
+        const roomX = Math.floor(gx / ROOM_SIZE);
+        const roomY = Math.floor(gy / ROOM_SIZE);
+        const enemies = this.dungeon.getRoom(roomX, roomY)?.enemies || [];
         const [p1, p2] = this.player.getSwordLine();
         for (const enemy of enemies) {
             if (enemy.dead) continue;
@@ -586,7 +586,11 @@ class Game {
             }
         );
         // Draw enemies in current room
-        const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
+        const gx = Math.floor(this.player.x / TILE_SIZE);
+        const gy = Math.floor(this.player.y / TILE_SIZE);
+        const roomX = Math.floor(gx / ROOM_SIZE);
+        const roomY = Math.floor(gy / ROOM_SIZE);
+        const enemies = this.dungeon.getRoom(roomX, roomY)?.enemies || [];
         for (const enemy of enemies) {
             if (enemy.dead) {
                 // Draw a red X for dead enemies
