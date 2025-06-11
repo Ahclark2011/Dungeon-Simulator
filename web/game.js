@@ -15,6 +15,24 @@ class Enemy {
         this.dead = false;
         this.knockback = {x: 0, y: 0, t: 0};
         this.deathTimer = 0; // for visual indicator
+        this.damageNumbers = [];
+    }
+    addDamageNumber(amount) {
+        // Random offset within enemy circle
+        const angle = Math.random() * 2 * Math.PI;
+        const r = Math.random() * (this.radius - 10);
+        const ox = Math.cos(angle) * r;
+        const oy = Math.sin(angle) * r;
+        this.damageNumbers.push({
+            amount,
+            ox,
+            oy,
+            t: 0
+        });
+    }
+    updateDamageNumbers(dt) {
+        this.damageNumbers.forEach(dn => dn.t += dt);
+        this.damageNumbers = this.damageNumbers.filter(dn => dn.t < 1.0);
     }
     moveToward(player, dt, others, dungeon) {
         if (this.dead) return;
@@ -84,9 +102,10 @@ class Enemy {
         const dist = Math.sqrt(dx*dx + dy*dy);
         return dist < this.radius + player.radius - 2;
     }
-    takeDamage(knockX, knockY) {
+    takeDamage(knockX, knockY, amount = 1) {
         if (this.dead) return;
-        this.hp--;
+        this.hp -= amount;
+        this.addDamageNumber(amount);
         if (this.hp <= 0) {
             this.dead = true;
             this.deathTimer = 1.0; // show indicator for 1 second
@@ -215,9 +234,10 @@ class Room {
 class RoomDungeon {
     constructor() {
         this.rooms = new Map();
+        this.lastRoomKey = null;
     }
 
-    getRoom(roomX, roomY, playerSpawn, isStartRoom = false) {
+    getRoom(roomX, roomY, playerSpawn, isStartRoom = false, entering = false) {
         const key = `${roomX},${roomY}`;
         if (!this.rooms.has(key)) {
             const neighbors = {
@@ -228,7 +248,10 @@ class RoomDungeon {
             };
             this.rooms.set(key, new Room(roomX, roomY, neighbors, playerSpawn, isStartRoom));
         }
-        return this.rooms.get(key);
+        const room = this.rooms.get(key);
+        // Only spawn enemies when entering the room
+        if (entering) room.spawnEnemies(playerSpawn);
+        return room;
     }
 
     isWallAtPixel(px, py) {
@@ -446,17 +469,22 @@ class Game {
     }
 
     updateEnemies(dt) {
-        // Ensure enemies are spawned for current room
+        // Ensure enemies are spawned for current room when entering
         const gx = Math.floor(this.player.x / TILE_SIZE);
         const gy = Math.floor(this.player.y / TILE_SIZE);
         const roomX = Math.floor(gx / ROOM_SIZE);
         const roomY = Math.floor(gy / ROOM_SIZE);
         const isStartRoom = (roomX === 0 && roomY === 0);
         const playerSpawn = isStartRoom ? this.player.spawnTile : null;
-        this.dungeon.getRoom(roomX, roomY, playerSpawn, isStartRoom);
+        const key = `${roomX},${roomY}`;
+        if (this.dungeon.lastRoomKey !== key) {
+            this.dungeon.getRoom(roomX, roomY, playerSpawn, isStartRoom, true);
+            this.dungeon.lastRoomKey = key;
+        }
         const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
         for (let i = enemies.length - 1; i >= 0; i--) {
             const enemy = enemies[i];
+            enemy.updateDamageNumbers(dt);
             if (enemy.dead) {
                 enemy.deathTimer -= dt;
                 if (enemy.deathTimer <= 0) {
@@ -504,7 +532,7 @@ class Game {
                 // Knockback direction
                 const kx = (enemy.x - this.player.x) / Math.max(1, Math.sqrt((enemy.x - this.player.x)**2 + (enemy.y - this.player.y)**2));
                 const ky = (enemy.y - this.player.y) / Math.max(1, Math.sqrt((enemy.x - this.player.x)**2 + (enemy.y - this.player.y)**2));
-                enemy.takeDamage(kx, ky);
+                enemy.takeDamage(kx, ky, 1);
             }
         }
     }
@@ -551,12 +579,30 @@ class Game {
                 this.ctx.lineTo(offsetX + enemy.x - enemy.radius, offsetY + enemy.y + enemy.radius);
                 this.ctx.stroke();
                 this.ctx.restore();
-                continue;
             }
-            this.ctx.fillStyle = enemy.color;
-            this.ctx.beginPath();
-            this.ctx.arc(offsetX + enemy.x, offsetY + enemy.y, enemy.radius, 0, Math.PI * 2);
-            this.ctx.fill();
+            if (!enemy.dead) {
+                this.ctx.fillStyle = enemy.color;
+                this.ctx.beginPath();
+                this.ctx.arc(offsetX + enemy.x, offsetY + enemy.y, enemy.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+            // Draw damage numbers
+            for (const dn of enemy.damageNumbers) {
+                // Animate: drop, bounce, drop, fade out
+                let y = -30 * dn.t + 20 * Math.sin(Math.PI * dn.t);
+                let alpha = 1.0 - dn.t;
+                this.ctx.save();
+                this.ctx.globalAlpha = Math.max(0, alpha);
+                this.ctx.fillStyle = '#ffcc00';
+                this.ctx.font = 'bold 32px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText(
+                    dn.amount,
+                    offsetX + enemy.x + dn.ox,
+                    offsetY + enemy.y + dn.oy + y
+                );
+                this.ctx.restore();
+            }
         }
         // Draw player hands
         const [h1, h2] = this.player.getHandPositions();
