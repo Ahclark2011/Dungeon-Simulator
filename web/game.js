@@ -108,6 +108,7 @@ class Room {
         this.carveRoom();
         this.enemies = [];
         this.spawned = false;
+        // Always spawn enemies, only avoid player spawn in start room
         this.spawnEnemies(isStartRoom ? playerSpawn : null);
     }
 
@@ -278,11 +279,11 @@ class Player {
         this.invuln = 0;
         this.swinging = false;
         this.swingAngle = 0;
-        this.swingDir = 1;
         this.swingTime = 0;
         this.mouseAngle = 0;
         this.hands = [0, 0];
         this.swingStartAngle = 0;
+        this.swingDir = 1;
     }
 
     findValidSpawn(dungeon) {
@@ -333,12 +334,12 @@ class Player {
         this.mouseAngle = Math.atan2(dy, dx);
     }
 
-    startSwing() {
+    startSwing(mouseAngle) {
         if (!this.swinging) {
             this.swinging = true;
             this.swingTime = 0;
-            this.swingDir = Math.random() < 0.5 ? 1 : -1;
-            this.swingStartAngle = this.mouseAngle;
+            this.swingStartAngle = mouseAngle;
+            this.swingDir = 1; // always swing in the same direction (clockwise)
         }
     }
 
@@ -352,15 +353,11 @@ class Player {
             } else {
                 // Arc: ease-in-out, overshoot, then return
                 const t = this.swingTime / duration;
-                // Ease-in-out (sinusoidal)
                 const ease = 0.5 - 0.5 * Math.cos(Math.PI * t);
-                // Swing from 0 to max, overshoot, then back
-                const maxArc = this.swingDir * (Math.PI / 3 + Math.PI / 12); // 60° + 15° overshoot
+                const maxArc = (Math.PI / 3 + Math.PI / 12); // 60° + 15° overshoot
                 if (t < 0.5) {
-                    // Go to overshoot
                     this.swingAngle = maxArc * (ease * 2);
                 } else {
-                    // Return to rest
                     this.swingAngle = maxArc * (2 - ease * 2);
                 }
                 this.mouseAngle = this.swingStartAngle + this.swingAngle;
@@ -421,9 +418,15 @@ class Game {
         });
         this.canvas.addEventListener('mousedown', (e) => {
             if (e.button === 0) {
-                // Set swing direction toward mouse
-                this.player.swingDir = this.handleSwingDirection(this.mouseX, this.mouseY);
-                this.player.startSwing();
+                // Always swing from the current mouse angle, in a fixed direction
+                const screenW = this.canvas.width;
+                const screenH = this.canvas.height;
+                const camX = screenW / 2;
+                const camY = screenH / 2;
+                const dx = this.mouseX - camX;
+                const dy = this.mouseY - camY;
+                const mouseAngle = Math.atan2(dy, dx);
+                this.player.startSwing(mouseAngle);
             }
         });
     }
@@ -603,21 +606,6 @@ class Game {
         }
         this.draw();
         requestAnimationFrame((ts) => this.gameLoop(ts));
-    }
-
-    handleSwingDirection(mouseX, mouseY) {
-        const screenW = this.canvas.width;
-        const screenH = this.canvas.height;
-        const camX = screenW / 2;
-        const camY = screenH / 2;
-        const dx = mouseX - camX;
-        const dy = mouseY - camY;
-        const mouseAngle = Math.atan2(dy, dx);
-        // Find the shortest direction to swing from current angle to mouseAngle
-        let diff = mouseAngle - this.player.mouseAngle;
-        while (diff > Math.PI) diff -= 2 * Math.PI;
-        while (diff < -Math.PI) diff += 2 * Math.PI;
-        return diff >= 0 ? 1 : -1;
     }
 }
 
