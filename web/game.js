@@ -433,6 +433,8 @@ class Game {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
         this.dungeon = new RoomDungeon();
+        // Generate starting room and neighbors before creating player
+        this.dungeon.loadAdjacentRooms(0, 0, null, true);
         this.player = new Player(this.dungeon);
         this.keys = {};
         this.lastTime = null;
