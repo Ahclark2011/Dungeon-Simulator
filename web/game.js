@@ -1,5 +1,5 @@
 // --- Room-based endless dungeon ---
-const ROOM_SIZE = 32;
+const ROOM_SIZE = 28;
 const TILE_SIZE = 64;
 const DOOR_WIDTH = 2; // doors are 2 tiles wide
 
@@ -254,6 +254,18 @@ class RoomDungeon {
         return room;
     }
 
+    loadAdjacentRooms(centerX, centerY, playerSpawn) {
+        // Load all 8 adjacent and diagonal rooms
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                const nx = centerX + dx;
+                const ny = centerY + dy;
+                // Only avoid player spawn for the center room
+                this.getRoom(nx, ny, (dx === 0 && dy === 0) ? playerSpawn : null, (nx === 0 && ny === 0), true);
+            }
+        }
+    }
+
     isWallAtPixel(px, py) {
         const gx = Math.floor(px / TILE_SIZE);
         const gy = Math.floor(py / TILE_SIZE);
@@ -471,7 +483,7 @@ class Game {
     }
 
     updateEnemies(dt) {
-        // Ensure enemies are spawned for current room when entering
+        // Ensure enemies are spawned for current room and all adjacent/diagonal rooms
         const gx = Math.floor(this.player.x / TILE_SIZE);
         const gy = Math.floor(this.player.y / TILE_SIZE);
         const roomX = Math.floor(gx / ROOM_SIZE);
@@ -480,7 +492,7 @@ class Game {
         const playerSpawn = isStartRoom ? this.player.spawnTile : null;
         const key = `${roomX},${roomY}`;
         if (this.dungeon.lastRoomKey !== key) {
-            this.dungeon.getRoom(roomX, roomY, playerSpawn, isStartRoom, true);
+            this.dungeon.loadAdjacentRooms(roomX, roomY, playerSpawn);
             this.dungeon.lastRoomKey = key;
         }
         const enemies = this.dungeon.getEnemiesInRoom(this.player.x, this.player.y);
@@ -634,6 +646,12 @@ class Game {
         this.ctx.fillStyle = '#c0392b';
         this.ctx.font = '32px Arial';
         this.ctx.fillText('HP: ' + this.player.hp, 20, 40);
+        // Draw room coordinates
+        this.ctx.fillStyle = '#333';
+        this.ctx.font = '28px Arial';
+        this.ctx.textAlign = 'right';
+        this.ctx.fillText(`Room: (${roomX}, ${roomY})`, this.canvas.width - 20, 40);
+        this.ctx.textAlign = 'left';
         // Game over
         if (this.player.hp <= 0) {
             this.ctx.fillStyle = '#c0392b';
