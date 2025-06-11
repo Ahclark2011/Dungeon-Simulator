@@ -260,8 +260,14 @@ class RoomDungeon {
             for (let dy = -1; dy <= 1; dy++) {
                 const nx = centerX + dx;
                 const ny = centerY + dy;
-                // Only avoid player spawn for the center room
-                this.getRoom(nx, ny, (dx === 0 && dy === 0) ? playerSpawn : null, (nx === 0 && ny === 0), true);
+                // Only avoid player spawn and set entering=true for the center room
+                this.getRoom(
+                    nx,
+                    ny,
+                    (dx === 0 && dy === 0) ? playerSpawn : null,
+                    (nx === 0 && ny === 0),
+                    (dx === 0 && dy === 0) // entering=true only for center
+                );
             }
         }
     }
