@@ -154,6 +154,7 @@ class Room {
         this.roomX = roomX;
         this.roomY = roomY;
         this.enemies = [];
+        this.droppedItems = []; // New: Array to hold items dropped in this room
         this.grid = Array(ROOM_SIZE).fill().map(() => Array(ROOM_SIZE).fill(1));
         this.doors = {}; // Initialize doors as empty, they will be generated in setupRoom
         this.hasGeneratedEnemies = false; // Flag to ensure enemies are spawned only once
@@ -397,6 +398,7 @@ class Player {
         this.swingStartAngle = 0;
         this.swingDir = 1;
         this.hitEnemiesThisSwing = new Set();
+        this.inventory = Array(10).fill(null); // Initialize 10 empty inventory slots
     }
 
     findValidSpawn(dungeon) {
@@ -625,6 +627,17 @@ class Game {
                         if (indexInRoom > -1) {
                             enemyRoom.enemies.splice(indexInRoom, 1);
                             console.log(`[Game] Removed dead enemy from room (${enemyRoomX}, ${enemyRoomY}). Enemies in room after splice: ${enemyRoom.enemies.length}`);
+
+                            // New: Drop a coin when an enemy dies
+                            const coin = {
+                                x: enemy.x, // Item position is enemy's last position
+                                y: enemy.y,
+                                radius: 10, // Small radius for pickup
+                                name: "Coin",
+                                color: "gold" // Visual color for the coin
+                            };
+                            enemyRoom.droppedItems.push(coin);
+                            console.log(`[Game] Dropped a Coin at (${coin.x.toFixed(2)}, ${coin.y.toFixed(2)}) in room (${enemyRoomX}, ${enemyRoomY})`);
                         } else {
                             console.log(`[DEBUG] Enemy not found in room. This should not happen. Re-checking room contents.`);
                             const foundEnemy = enemyRoom.enemies.find(e => e === enemy);
@@ -700,6 +713,35 @@ class Game {
         }
     }
 
+    checkItemPickups() {
+        const gx = Math.floor(this.player.x / TILE_SIZE);
+        const gy = Math.floor(this.player.y / TILE_SIZE);
+        const roomX = Math.floor(gx / ROOM_SIZE);
+        const roomY = Math.floor(gy / ROOM_SIZE);
+
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const room = this.dungeon.getRoom(roomX + dx, roomY + dy);
+                if (room) {
+                    for (let i = room.droppedItems.length - 1; i >= 0; i--) {
+                        const item = room.droppedItems[i];
+                        const dist = Math.sqrt((this.player.x - item.x)**2 + (this.player.y - item.y)**2);
+                        if (dist < this.player.radius + item.radius) {
+                            // Player can pick up this item
+                            // For now, let's just add it to the first empty slot
+                            const emptySlotIndex = this.player.inventory.indexOf(null);
+                            if (emptySlotIndex !== -1) {
+                                this.player.inventory[emptySlotIndex] = item;
+                                room.droppedItems.splice(i, 1); // Remove item from the room
+                                console.log(`[Game] Picked up ${item.name}! Inventory:`, this.player.inventory);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     draw() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         this.ctx.fillStyle = '#FFFFFF'; // Background is white
@@ -766,8 +808,23 @@ class Game {
             }
         }
 
+        // Draw dropped items (from all visible rooms)
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const room = this.dungeon.getRoom(playerRoomX + dx, playerRoomY + dy);
+                if (room) {
+                    for (const item of room.droppedItems) {
+                        this.ctx.fillStyle = item.color; // Use the item's defined color
+                        this.ctx.beginPath();
+                        this.ctx.arc(item.x - camX + screenW / 2, item.y - camY + screenH / 2, item.radius, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    }
+                }
+            }
+        }
+
         // Draw player
-        this.ctx.fillStyle = 'tan'; // Player color
+        this.ctx.fillStyle = '#F5DEB3'; // Player color - Lighter tan (Wheat color)
         this.ctx.beginPath();
         this.ctx.arc(screenW / 2, screenH / 2, this.player.radius, 0, Math.PI * 2);
         this.ctx.fill();
@@ -803,6 +860,32 @@ class Game {
         this.ctx.font = '24px Arial';
         this.ctx.fillText(`Room: (${currentRoomDisplayX}, ${currentRoomDisplayY})`, screenW - 200, 40);
 
+        // Draw Inventory
+        const slotSize = 60; // Size of each inventory slot
+        const padding = 10; // Padding around the inventory bar
+        const inventoryWidth = (slotSize + padding) * this.player.inventory.length - padding;
+        const inventoryX = (screenW - inventoryWidth) / 2; // Center the inventory horizontally
+        const inventoryY = screenH - slotSize - padding; // Position at the bottom
+
+        this.ctx.strokeStyle = '#FFFFFF'; // White border for slots
+        this.ctx.lineWidth = 3;
+
+        for (let i = 0; i < this.player.inventory.length; i++) {
+            const x = inventoryX + i * (slotSize + padding);
+            const y = inventoryY;
+
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; // Semi-transparent black background for slots
+            this.ctx.fillRect(x, y, slotSize, slotSize);
+            this.ctx.strokeRect(x, y, slotSize, slotSize);
+
+            // For now, just a placeholder. Later we will draw actual items.
+            // if (this.player.inventory[i]) {
+            //     this.ctx.fillStyle = 'white';
+            //     this.ctx.font = '14px Arial';
+            //     this.ctx.fillText(this.player.inventory[i].name, x + padding, y + slotSize / 2);
+            // }
+        }
+
         // Game Over screen
         if (this.player.hp <= 0) {
             this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; // Semi-transparent black overlay
@@ -824,6 +907,7 @@ class Game {
             this.updateEnemies(dt);
             this.updatePlayer(dt);
             this.checkSwordHits();
+            this.checkItemPickups();
         }
         this.draw();
         // Only continue game loop if player is alive
