@@ -398,7 +398,8 @@ class Player {
         this.swingStartAngle = 0;
         this.swingDir = 1;
         this.hitEnemiesThisSwing = new Set();
-        this.inventory = Array(10).fill(null); // Initialize 10 empty inventory slots
+        this.inventory = Array(40).fill(null); // Initialize 40 inventory slots (10 hotbar + 30 extended)
+        this.extendedInventoryOpen = false; // New: Track if the extended inventory is open
     }
 
     findValidSpawn(dungeon) {
@@ -543,6 +544,9 @@ class Game {
             this.keys[e.key] = true;
             if (e.key === 'Escape') {
                 window.close();
+            } else if (e.key === 'e' || e.key === 'E') {
+                this.player.extendedInventoryOpen = !this.player.extendedInventoryOpen;
+                console.log(`[Game] Extended inventory toggled: ${this.player.extendedInventoryOpen}`);
             }
         });
         window.addEventListener('keyup', (e) => {
@@ -831,7 +835,7 @@ class Game {
 
         // Draw player hands (always visible)
         const [h1, h2] = this.player.getHandPositions();
-        this.ctx.fillStyle = 'tan'; // Hands color
+        this.ctx.fillStyle = '#F5DEB3'; // Hands color - Lighter tan (Wheat color)
         this.ctx.beginPath();
         this.ctx.arc(h1[0] - camX + screenW / 2, h1[1] - camY + screenH / 2, this.player.radius / 2, 0, Math.PI * 2);
         this.ctx.fill();
@@ -860,30 +864,67 @@ class Game {
         this.ctx.font = '24px Arial';
         this.ctx.fillText(`Room: (${currentRoomDisplayX}, ${currentRoomDisplayY})`, screenW - 200, 40);
 
-        // Draw Inventory
+        // Draw Inventory (Hotbar always visible, extended inventory conditional)
         const slotSize = 60; // Size of each inventory slot
-        const padding = 10; // Padding around the inventory bar
-        const inventoryWidth = (slotSize + padding) * this.player.inventory.length - padding;
+        const padding = 10; // Padding around the inventory bar and between slots
+        const hotbarLength = 10; // Number of slots in the hotbar
+
+        const inventoryWidth = (slotSize + padding) * hotbarLength - padding;
         const inventoryX = (screenW - inventoryWidth) / 2; // Center the inventory horizontally
-        const inventoryY = screenH - slotSize - padding; // Position at the bottom
+        const hotbarY = screenH - slotSize - padding; // Position hotbar at the bottom
 
         this.ctx.strokeStyle = '#FFFFFF'; // White border for slots
         this.ctx.lineWidth = 3;
 
-        for (let i = 0; i < this.player.inventory.length; i++) {
+        // Draw hotbar slots (first 10 slots)
+        for (let i = 0; i < hotbarLength; i++) {
             const x = inventoryX + i * (slotSize + padding);
-            const y = inventoryY;
+            const y = hotbarY;
 
             this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; // Semi-transparent black background for slots
             this.ctx.fillRect(x, y, slotSize, slotSize);
             this.ctx.strokeRect(x, y, slotSize, slotSize);
 
-            // For now, just a placeholder. Later we will draw actual items.
-            // if (this.player.inventory[i]) {
-            //     this.ctx.fillStyle = 'white';
-            //     this.ctx.font = '14px Arial';
-            //     this.ctx.fillText(this.player.inventory[i].name, x + padding, y + slotSize / 2);
-            // }
+            // Draw hotbar items
+            if (this.player.inventory[i]) {
+                this.ctx.fillStyle = this.player.inventory[i].color;
+                this.ctx.beginPath();
+                this.ctx.arc(x + slotSize / 2, y + slotSize / 2, this.player.inventory[i].radius, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+        }
+
+        // Draw extended inventory slots if open
+        if (this.player.extendedInventoryOpen) {
+            const extendedRows = 3; // 3 rows for 30 additional slots (3 * 10)
+            const extendedInventoryHeight = (slotSize + padding) * extendedRows - padding;
+            const extendedInventoryY = hotbarY - extendedInventoryHeight - padding; // Position above hotbar
+
+            // Background for the entire extended inventory area
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; // Slightly darker background for the full inventory
+            this.ctx.fillRect(inventoryX - padding, extendedInventoryY - padding, 
+                              inventoryWidth + padding * 2, extendedInventoryHeight + padding * 2);
+
+            for (let i = hotbarLength; i < this.player.inventory.length; i++) {
+                const slotIndex = i - hotbarLength; // 0-29 for extended slots
+                const row = Math.floor(slotIndex / hotbarLength);
+                const col = slotIndex % hotbarLength;
+
+                const x = inventoryX + col * (slotSize + padding);
+                const y = extendedInventoryY + row * (slotSize + padding);
+
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; // Semi-transparent black background for slots
+                this.ctx.fillRect(x, y, slotSize, slotSize);
+                this.ctx.strokeRect(x, y, slotSize, slotSize);
+
+                // Draw extended inventory items
+                if (this.player.inventory[i]) {
+                    this.ctx.fillStyle = this.player.inventory[i].color;
+                    this.ctx.beginPath();
+                    this.ctx.arc(x + slotSize / 2, y + slotSize / 2, this.player.inventory[i].radius, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+            }
         }
 
         // Game Over screen
